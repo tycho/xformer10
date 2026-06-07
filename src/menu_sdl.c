@@ -487,10 +487,21 @@ void MenuQuit(void)
 
 static void MenuSyncCursor(void)
 {
-    if (gMenuOpen >= 0)
-        SDL_ShowCursor(SDL_ENABLE);
-    else if (SDL_GetWindowFlags(GetSDLWindow()) & SDL_WINDOW_INPUT_FOCUS)
-        SDL_ShowCursor(SDL_DISABLE);
+    /* Show the cursor when the user needs it: a menu is open, the window isn't
+       focused, the pointer is over the menu bar, or we're in the tiled overview
+       (where the mouse picks tiles). Only auto-hide it over the single-VM play
+       area, so it stays out of the way during gameplay but never disappears on
+       the menu bar. */
+    int show;
+    if (gMenuOpen >= 0
+        || !(SDL_GetWindowFlags(GetSDLWindow()) & SDL_WINDOW_INPUT_FOCUS)) {
+        show = 1;
+    } else {
+        int y;
+        SDL_GetMouseState(NULL, &y);
+        show = (y < MENU_H) || v.fTiling;
+    }
+    SDL_ShowCursor(show ? SDL_ENABLE : SDL_DISABLE);
 }
 
 void MenuRender(SDL_Renderer *ren)
