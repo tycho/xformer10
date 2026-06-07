@@ -812,7 +812,7 @@ void CchDisAsm(void *candy, WORD *puMem)
         break;
         }
 
-    printf(rgch);   // must be printf, not puts, because we DON'T want a carriage return
+    printf("%s", rgch);   // must be printf, not puts, because we DON'T want a carriage return
     }
 
 /***********************************************************************/

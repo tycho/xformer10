@@ -9,7 +9,7 @@
 
 typedef unsigned long int ADDR;
 typedef uint8_t BYTE;
-typedef int BOOL;
+typedef uint32_t BOOL;   /* must match compat_win.h's BOOL */
 
 /* PeekBAtariMON/PokeBAtariMON are non-inline external wrappers in atari800.c
    that call the real (static inline) bus-dispatch implementations. Forwarding

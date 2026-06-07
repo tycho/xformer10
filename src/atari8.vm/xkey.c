@@ -361,7 +361,7 @@ void CheckKey(void *candy, BOOL fDoShift, WORD myShift)
             break;
     }
 
-lookitup:
+lookitup: ;
 
     //if (fForceCtrl) sh = shift | 4;
     

@@ -3994,7 +3994,7 @@ void ShowAbout()
         "Classic Computer Emulator.\n"
 #endif
         "Version 10.10.2021.0101 - built on %s\n"
-        "%2Id-bit %s release.\n\n"
+        "%2zu-bit %s release.\n\n"
         "Copyright (C) 1986-2021 Darek Mihocka.\n"
         "All Rights Reserved.\n\n"
 

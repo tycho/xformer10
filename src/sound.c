@@ -212,7 +212,7 @@ void SoundDoneCallback(void *candy, int iCurSample)
         }
 
         // where in the buffer to start writing
-        signed char *pb = pwhdr[sCurBuf].lpData + sOldSample * 2;    // mono
+        signed char *pb = (signed char *)pwhdr[sCurBuf].lpData + sOldSample * 2;    // mono
 
         // I know we already take great pains to only call this when something has changed, but because we can be called
         // so often we reject some calls that were processing the same sample as before, nothing might have changed.
@@ -1183,9 +1183,9 @@ void InitJoysticks()
                 Sleep(1); // believe it or not, if we call it too soon, we get a default centred position that always looks like a joystick
                 mm = joyGetPos(JOYSTICKID1 + i, &ji);
 
-                ULONG ux = abs((jc.wXmax - jc.wXmin) / 2 - (ji.wXpos - jc.wXmin));
-                ULONG uy = abs((jc.wYmax - jc.wYmin) / 2 - (ji.wYpos - jc.wYmin));
-                ULONG uz = abs((jc.wYmax - jc.wYmin) * 3 / 4 - (ji.wYpos - jc.wYmin));   // only driving controller reports $bfef or so
+                ULONG ux = abs((int)((jc.wXmax - jc.wXmin) / 2 - (ji.wXpos - jc.wXmin)));
+                ULONG uy = abs((int)((jc.wYmax - jc.wYmin) / 2 - (ji.wYpos - jc.wYmin)));
+                ULONG uz = abs((int)((jc.wYmax - jc.wYmin) * 3 / 4 - (ji.wYpos - jc.wYmin)));   // only driving controller reports $bfef or so
 
                 if (ux < 0x20 && uy < 0x20)
                     vi.rgjt[j] = JT_JOYSTICK | JT_DRIVING;  // x & y centred? it's one of these 2

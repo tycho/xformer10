@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(xformer10 C)
 
-set(CMAKE_C_STANDARD 99)
+# C11: identical typedef redefinitions (ADDR, PFNREAD, ...) across headers are
+# legal in C11, which silences a pile of -Wtypedef-redefinition warnings.
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 find_package(SDL2 REQUIRED)

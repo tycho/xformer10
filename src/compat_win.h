@@ -39,7 +39,7 @@ typedef uint8_t   BYTE;
 typedef uint16_t  WORD;
 typedef uint32_t  DWORD;
 typedef uint64_t  QWORD;
-typedef int       BOOL;
+typedef uint32_t  BOOL;   /* unsigned so 1-bit ':1' bitfields hold 0/1, not 0/-1 */
 typedef char      CHAR;
 typedef uint16_t  WCHAR;
 typedef char     *LPSTR;
@@ -938,9 +938,14 @@ static inline BOOL FlushConsoleInputBuffer(HANDLE h) { (void)h; return FALSE; } 
 #define lstrcpyn  strncpy
 #define lstrcat   strcat
 
-/* Bit rotate (MSVC intrinsic not available on GCC/Linux) */
+/* Bit rotate (MSVC intrinsic). The toolchain's own intrinsics headers may
+   already define these as macros; only supply a fallback when they don't. */
+#ifndef _rotl
 #define _rotl(x,n)  (((unsigned)(x) << (n)) | ((unsigned)(x) >> (32-(n))))
+#endif
+#ifndef _rotr
 #define _rotr(x,n)  (((unsigned)(x) >> (n)) | ((unsigned)(x) << (32-(n))))
+#endif
 
 #endif /* !_WIN32 */
 #endif /* COMPAT_WIN_H */

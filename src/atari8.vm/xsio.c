@@ -720,7 +720,7 @@ lNAK:
             break;
 
         /* status request */
-        case 'S':
+        case 'S': ;
           /*  printf("SIO command 'S'\n"); */
 
             /* b7 = enhanced   b5 = DD/SD  b4 = motor on   b3 = write prot */
@@ -843,7 +843,7 @@ lNAK:
 
             _lseek(pdrive->h,(ULONG)((wSector-1) * lcbSector) + cbSIO2PCFudge,SEEK_SET);
 
-            if ((wCom == 'R'))    // wStat is only checked for cassette I/O not disk I/O, breaks apps // && (wStat == 0x40))
+            if (wCom == 'R')    // wStat is only checked for cassette I/O not disk I/O, breaks apps // && (wStat == 0x40))
             {
 #if 0
                 printf("Read: sector = %d  wBuff = $%4x  wBytes = %d  lcbSector = %ld  md = %d\n",

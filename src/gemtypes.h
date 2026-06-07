@@ -382,31 +382,31 @@ typedef struct
     // Many global settings from Gemulator 98/99/2000 are now
     // VM specific so that things like boot disk don't conflict.
 
-    int      fSound:1;      // enable sound output
-    int      fJoystick:1;   // enable joystick support
+    unsigned      fSound:1;      // enable sound output
+    unsigned      fJoystick:1;   // enable joystick support
     int      iCOM:3;        // 0 = no COM port, 1 = COM1:, ... 4 = COM4:
     int      iLPT:2;        // 0 = no LPT port, 1 = LPT1:, ... 3 = LPT3:
-    int      fShare:1;      // 0 = hog the printer port, 1 = share it
+    unsigned      fShare:1;      // 0 = hog the printer port, 1 = share it
 
-    int      xCart:1;       // install cartridge ROM if present
-    int      xPatchROM:1;   // patch an older ROM to a newer version
+    unsigned      xCart:1;       // install cartridge ROM if present
+    unsigned      xPatchROM:1;   // patch an older ROM to a newer version
     int      iBootDisk:5;    // 0 = floppy, 2 = C:, 3 = D:, etc.
-    int      fCPUAuto:1;    // TRUE means VM determines the CPU
+    unsigned      fCPUAuto:1;    // TRUE means VM determines the CPU
 
-    int      fBlitter:1;    // enable blitter hardware in Atari ST mode
-    int      fMIDI:1;       // enable MIDI hardware emulation
-    int      fUseVHD:1;     // TRUE means to use virtual disks
-    int      fSwapKeys:1;   // use alternate keyboard layout
-    int      xQuickBaud:1;  // Acceleration: activate fast baud rates
+    unsigned      fBlitter:1;    // enable blitter hardware in Atari ST mode
+    unsigned      fMIDI:1;       // enable MIDI hardware emulation
+    unsigned      fUseVHD:1;     // TRUE means to use virtual disks
+    unsigned      fSwapKeys:1;   // use alternate keyboard layout
+    unsigned      xQuickBaud:1;  // Acceleration: activate fast baud rates
     
-    int      fEmuPAL:1;        // emulate PAL
+    unsigned      fEmuPAL:1;        // emulate PAL
     
     BOOL     fTimeTravelEnabled;    
     BOOL     fTimeTravelFixed;  // using fixed points vs 13 second jumps
     
     // UNUSED
-    int      fColdReset:1;  // UNUSED if set, this VM needs a cold boot
-    int      fOldValidVM:1;    // if set, this VM is initialized
+    unsigned      fColdReset:1;  // UNUSED if set, this VM needs a cold boot
+    unsigned      fOldValidVM:1;    // if set, this VM is initialized
 
     int      res83:8;
 
@@ -564,20 +564,20 @@ typedef struct
 
     BYTE rgbShiftMs[6]; // shift coefficients to convert tick count to ms
 
-    int  fRefreshScreen:1; // true if the window needs redrawing
-    int  fHaveFocus:1;  // true if Gemulator window is on top
-    int  fWinNT:1;      // true if on NT, otherwise Win95 or Win 3.1
-    int  fGEMMouse:1;   // true if mouse is currently captured
-    int  fMouseMoved:1;
-    int  fVMCapture:1;  // true if the VM needs to capture the mouse
-    int  fFake040:1;    // TRUE when we're 68030 faking 68040 (enabled MOVE16)
-    int  fQuitting:1;   // TRUE when all threads should quit!
+    unsigned  fRefreshScreen:1; // true if the window needs redrawing
+    unsigned  fHaveFocus:1;  // true if Gemulator window is on top
+    unsigned  fWinNT:1;      // true if on NT, otherwise Win95 or Win 3.1
+    unsigned  fGEMMouse:1;   // true if mouse is currently captured
+    unsigned  fMouseMoved:1;
+    unsigned  fVMCapture:1;  // true if the VM needs to capture the mouse
+    unsigned  fFake040:1;    // TRUE when we're 68030 faking 68040 (enabled MOVE16)
+    unsigned  fQuitting:1;   // TRUE when all threads should quit!
 
-    int  fExecuting:1;  // TRUE if emulator is executing
-    int  fInDebugger:1; // TRUE if debugger console is active
-    int  fDebugBreak:1; // TRUE to signal a break into debugger
-    int  fParentCon:1;  // TRUE if parent console present (i.e. command prompt)
-    int  fWantDebugBreak : 1; // TRUE if VM wants the main thread to break into debugger
+    unsigned  fExecuting:1;  // TRUE if emulator is executing
+    unsigned  fInDebugger:1; // TRUE if debugger console is active
+    unsigned  fDebugBreak:1; // TRUE to signal a break into debugger
+    unsigned  fParentCon:1;  // TRUE if parent console present (i.e. command prompt)
+    unsigned  fWantDebugBreak : 1; // TRUE if VM wants the main thread to break into debugger
 
     BYTE rgbShiftE[6];  // shift coefficients to convert tick count to E clk
 
@@ -1123,8 +1123,8 @@ BOOL FInitSerialPort(int iCOM);
 int  CchSerialPending(void);
 BOOL CchSerialRead(char *rgb, int cchRead);
 BOOL FSetBaudRate(int, int, int, int);
-void SetRTS(int);
-void SetDTR(int);
+void SetRTS(BOOL);
+void SetDTR(BOOL);
 ULONG GetModemStatus();
 BOOL FWriteSerialPort(BYTE b);
 
@@ -1967,7 +1967,7 @@ typedef struct _machw
             int     dx:7;   // mouse X delta
             int     :1;
             int     dy:7;   // mouse Y delta
-            int     fUp:1;
+            unsigned     fUp:1;
             };
 
         // ADB keyboard registers
@@ -1975,26 +1975,26 @@ typedef struct _machw
         struct
             {
             int     scan2:7;
-            int     fUp2:1;
+            unsigned     fUp2:1;
             int     scan1:7;
-            int     fUp1:1;
+            unsigned     fUp1:1;
             int     :16;
 
             int     :32;    // register 1 unused
 
-            int     fLEDNum:1;
-            int     fLEDCaps:1;
-            int     fLEDScrl:1;
+            unsigned     fLEDNum:1;
+            unsigned     fLEDCaps:1;
+            unsigned     fLEDScrl:1;
             int     :3;
-            int     ScrlLock:1;
-            int     NulLock:1;
-            int     fCommand:1;
-            int     fOption:1;
-            int     fShift:1;
-            int     fControl:1;
-            int     fReset:1;
-            int     fCapsLock:1;
-            int     fDelete:1;
+            unsigned     ScrlLock:1;
+            unsigned     NulLock:1;
+            unsigned     fCommand:1;
+            unsigned     fOption:1;
+            unsigned     fShift:1;
+            unsigned     fControl:1;
+            unsigned     fReset:1;
+            unsigned     fCapsLock:1;
+            unsigned     fDelete:1;
             int     :17;
 
             int     :32;    // register 3 unused

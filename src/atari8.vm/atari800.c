@@ -710,7 +710,7 @@ void DoVBI(void *candy)
                     vdir /= (int)((jc.wYmax - jc.wYmin) / wJoySens);
 
                     // driving controller special value reports $bfef or so
-                    ULONG uz = abs((jc.wYmax - jc.wYmin) * 3 / 4 - (ji.dwYpos - jc.wYmin));
+                    ULONG uz = abs((int)((jc.wYmax - jc.wYmin) * 3 / 4 - (ji.dwYpos - jc.wYmin)));
 
                     BYTE *pB = (joy < 2) ? &rPADATA : &rPBDATA;     // joy 1 & 3 are low nibble, 2 & 4 are high nibble
 
@@ -728,8 +728,8 @@ void DoVBI(void *candy)
                     // we don't know which it is yet, figure it out
                     if ((vi.rgjt[joy] & (JT_JOYSTICK | JT_DRIVING)) == (JT_JOYSTICK | JT_DRIVING))
                     {
-                        ULONG ux = abs((jc.wXmax - jc.wXmin) / 2 - (ji.dwXpos - jc.wXmin));
-                        ULONG uy = abs((jc.wYmax - jc.wYmin) / 2 - (ji.dwYpos - jc.wYmin));
+                        ULONG ux = abs((int)((jc.wXmax - jc.wXmin) / 2 - (ji.dwXpos - jc.wXmin)));
+                        ULONG uy = abs((int)((jc.wYmax - jc.wYmin) / 2 - (ji.dwYpos - jc.wYmin)));
 
                         // This is a value a driving controller can't return, so we must be an XBox joystick or similar
                         if (!(ux < 0x20 && (uz < 0x20 || (ji.dwYpos - jc.wYmin) < 0x20 || uy < 0x20 || (jc.wYmax - ji.dwYpos) < 0x20)))
@@ -2576,10 +2576,12 @@ BOOL __cdecl ColdbootAtari(void *candy)
 
     // we are cold booting because we want to TOGGLE BASIC
     else if (pvmin->fKillMePlease == 5)
+    {
         if (ramtop == 0xc000)
             ramtop = 0xa000;
         else
             ramtop = 0xc000;
+    }
 
     // 800 resets PIA on cold start only
     if (mdXLXE == md800)
