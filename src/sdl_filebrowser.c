@@ -9,8 +9,8 @@
 #include <limits.h>
 #include <libgen.h>
 #include "sdl_filebrowser.h"
+#include "font_sdl.h"
 
-#define FONT_PATH    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 #define FB_FONT_SIZE 14
 #define FB_OVL_W     600
 #define FB_OVL_H     440
@@ -247,7 +247,8 @@ int SDL_FileBrowserRunEx(SDL_Renderer *ren, SDL_Window *win,
                          const char *start_path, char *out, int sz,
                          const char *exts, int mode)
 {
-    TTF_Font *font = TTF_OpenFont(FONT_PATH, FB_FONT_SIZE);
+    const char *fontPath = SDLUIFontPath();
+    TTF_Font *font = fontPath ? TTF_OpenFont(fontPath, FB_FONT_SIZE) : NULL;
     if (!font) return 0;
 
     char cwd[PATH_MAX];

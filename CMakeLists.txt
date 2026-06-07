@@ -7,6 +7,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 find_package(SDL2 REQUIRED)
 find_package(SDL2_ttf REQUIRED)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
+
 add_executable(xformer10
     src/atari8.vm/atari800.c
     src/atari8.vm/atarikey.c
@@ -37,6 +40,7 @@ add_executable(xformer10
     src/stubs_linux.c
     src/menu_sdl.c
     src/sdl_filebrowser.c
+    src/font_sdl.c
 )
 
 target_compile_definitions(xformer10 PRIVATE
@@ -63,8 +67,8 @@ target_compile_options(xformer10 PRIVATE
 )
 
 if(TARGET SDL2::SDL2)
-    target_link_libraries(xformer10 PRIVATE m pthread SDL2::SDL2 SDL2_ttf::SDL2_ttf)
+    target_link_libraries(xformer10 PRIVATE m pthread SDL2::SDL2 SDL2_ttf::SDL2_ttf PkgConfig::FONTCONFIG)
 else()
     target_include_directories(xformer10 PRIVATE ${SDL2_INCLUDE_DIRS})
-    target_link_libraries(xformer10 PRIVATE m pthread ${SDL2_LIBRARIES} SDL2_ttf::SDL2_ttf)
+    target_link_libraries(xformer10 PRIVATE m pthread ${SDL2_LIBRARIES} SDL2_ttf::SDL2_ttf PkgConfig::FONTCONFIG)
 endif()

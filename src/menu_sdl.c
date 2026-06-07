@@ -22,10 +22,10 @@
 #include "gemtypes.h"
 #include "menu_sdl.h"
 #include "ddlib_sdl.h"
+#include "font_sdl.h"
 
 extern void LinuxDoCommand(int idm);
 
-#define FONT_PATH         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 #define FONT_SIZE         14
 #define NUM_TOPS          5
 #define DISK_MENU_IDX     3
@@ -301,9 +301,17 @@ void MenuInit(SDL_Renderer *ren)
         fprintf(stderr, "MenuInit: TTF_Init failed: %s\n", TTF_GetError());
         return;
     }
-    gFont = TTF_OpenFont(FONT_PATH, FONT_SIZE);
+    const char *fontPath = SDLUIFontPath();
+    if (!fontPath) {
+        fprintf(stderr, "MenuInit: no usable UI font found "
+                        "(install DejaVu/any sans font or set $XFORMER_FONT)\n");
+        TTF_Quit();
+        return;
+    }
+    gFont = TTF_OpenFont(fontPath, FONT_SIZE);
     if (!gFont) {
-        fprintf(stderr, "MenuInit: TTF_OpenFont failed: %s\n", TTF_GetError());
+        fprintf(stderr, "MenuInit: TTF_OpenFont(%s) failed: %s\n",
+                fontPath, TTF_GetError());
         TTF_Quit();
         return;
     }
