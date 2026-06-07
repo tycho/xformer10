@@ -92,6 +92,9 @@ int main(int argc, char **argv)
     InitProperties();
     LoadProperties(NULL, FALSE);
 
+    fBrakes = TRUE;     /* emulated (real) speed, not turbo; set before the first
+                           DisplayStatus so the title shows the right speed */
+
     vi.szAppName = "Xformer";
     vi.szTitle   = "Xformer";
 
@@ -201,6 +204,9 @@ int main(int argc, char **argv)
     SDL_ShowCursor(SDL_DISABLE);
 
     signal(SIGINT, sigint_handler);
+
+    /* wall-clock anchor for frame pacing (see throttle at the end of the loop) */
+    ULONGLONG cLastJif = GetCycles();
 
     SDL_Event e;
     while (!vi.fQuitting) {
@@ -400,6 +406,43 @@ int main(int argc, char **argv)
             /* tiled overview with no visible tiles (e.g. a search that matches
                nothing): still repaint so the view doesn't freeze on a stale frame */
             RenderBitmap_SDL();
+        }
+
+        /* Throttle to the Atari frame rate, NOT the display refresh. The loop
+           emulates one guest frame per iteration, so pacing it only by
+           PRESENTVSYNC would run the guest (and its audio) at 2x on a 120 Hz
+           panel. GetCycles() here is pure wall-clock, so this sleeps until one
+           guest jiffy of real time has passed. It is separate from
+           fRenderThisTime, which only gates sprite output, not speed. Turbo
+           (fBrakes==0) skips the throttle and free-runs (still vsync-capped). */
+        if (!vi.fQuitting) {
+            int pal = (!v.fTiling && v.iVM >= 0 && rgpvm[v.iVM]->fEmuPAL);
+            ULONGLONG ulljif = pal ? (PAL_CLK / PAL_FPS) : (NTSC_CLK / NTSC_FPS);
+            ULONGLONG ullsec = pal ?  PAL_CLK            :  NTSC_CLK;
+            ULONGLONG cCur   = GetCycles() - cLastJif;
+
+            /* only brake when at emulated speed (or idle); cap catch-up to 1s */
+            if ((fBrakes || !cThreads) && cCur < ullsec) {
+                while (cCur < ulljif) {
+                    Sleep((cCur < ulljif / 2) ? 8 : 1);   /* sleep, never spin */
+                    cCur = GetCycles() - cLastJif;
+                }
+                cLastJif += ulljif;     /* fixed cadence; absorbs vsync jitter */
+            } else {
+                cLastJif = GetCycles(); /* turbo or fell behind: resync */
+            }
+        }
+
+        /* refresh the title bar once a second so the speed, current VM name,
+           and search prompt stay current */
+        {
+            static Uint64 lastStatusMs;
+            Uint64 nowMs = SDL_GetTicks64();
+            if (nowMs - lastStatusMs >= 1000) {
+                lastStatusMs = nowMs;
+                int ids = (v.fTiling && sVM >= 0) ? sVM : (v.fTiling ? -1 : v.iVM);
+                DisplayStatus(ids);
+            }
         }
     }
 
