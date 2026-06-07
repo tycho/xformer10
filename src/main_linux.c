@@ -401,6 +401,59 @@ int main(int argc, char **argv)
             for (int t = 0; t < cThreads; t++)
                 SetEvent(ThreadStuff[t].hGoEvent);
             WaitForMultipleObjects(cThreads, hDoneEvent, TRUE, INFINITE);
+
+            /* A VM stopped executing this frame (vi.fExecuting got reset): it ran
+               a KIL — the auto-detect path's signal that this app needs a
+               different machine type — or it wants the debugger. Recover the same
+               way the Windows message loop does: reinstall such a VM as a
+               different type and cold start it (which also clears the breakpoint
+               KillMePlease left behind), or delete it if no type works. Without
+               this the VM re-KILs every frame and the guest crawls. */
+            if (!vi.fExecuting) {
+                BOOL fOK = TRUE, fDeleted = FALSE;
+                for (int i = 0; i < v.cVM; i++) {
+                    int why = (int)rgpvmi(i)->fKillMePlease;
+                    if (why && why != 2 && why != 4) {
+                        int type = rgpvm[i]->bfHW, otype = 0;
+                        while (type >>= 1) otype++;
+                        BOOL fXOK = FALSE;
+                        FUnInitVM(i);
+                        FUnInstallVM(i);
+                        rgpvmi(i)->pPrivate = NULL;
+                        rgpvmi(i)->iPrivateSize = 0;
+                        if (FInstallVM(&rgpvmi(i)->pPrivate, &rgpvmi(i)->iPrivateSize,
+                                       rgpvm[i], (PVMINFO)VM_CRASHED, otype))
+                            if (FInitVM(i))
+                                if (ColdStart(i))
+                                    fXOK = TRUE;
+                        if (!fXOK) {
+                            DeleteVM(v.iVM, TRUE);
+                            fDeleted = TRUE;
+                        }
+                        rgpvmi(i)->fKillMePlease = FALSE;
+                    } else if (why == 2 || why == 4) {       /* binary loader / BASIC */
+                        if (!ColdStart(i)) {
+                            DeleteVM(v.iVM, TRUE);
+                            fDeleted = TRUE;
+                        }
+                        rgpvmi(i)->fKillMePlease = FALSE;
+                    } else if (rgpvmi(i)->fWantDebugger) {
+                        fOK = FALSE;                          /* no debugger on Linux; leave stopped */
+                    }
+                }
+                if (fOK)
+                    vi.fExecuting = TRUE;
+                /* A reinstalled VM keeps its tile/thread slot, so its thread just
+                   picks up the new private next frame — only a delete shifts the
+                   indices and needs the thread pool rebuilt. The throttle below
+                   still paces these recovery frames, so we don't spin. */
+                if (fDeleted) {
+                    FixAllMenus(TRUE);
+                    InitThreads();
+                    continue;
+                }
+            }
+
             RenderBitmap_SDL();
         } else if (v.fTiling && !vi.fQuitting) {
             /* tiled overview with no visible tiles (e.g. a search that matches
