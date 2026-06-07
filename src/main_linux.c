@@ -75,6 +75,14 @@ int main(void)
         mkdir(vi.szWindowsDir, 0755);
     }
 
+    // initialize our clock
+    LARGE_INTEGER qpc;
+    LARGE_INTEGER qpf;
+    QueryPerformanceFrequency(&qpf);
+    vi.qpfCold = qpf.QuadPart;
+    QueryPerformanceCounter(&qpc);
+    vi.qpcCold = qpc.QuadPart;
+
     rgpvm = malloc(128 * (sizeof(VM) + sizeof(VMINST)));
     cpvm = 128;
 
