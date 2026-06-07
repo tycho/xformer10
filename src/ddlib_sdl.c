@@ -135,7 +135,14 @@ void RenderBitmap_SDL(void)
     SDL_SetRenderDrawColor(gSDLRen, 0, 0, 0, 255);
     SDL_RenderClear(gSDLRen);
 
-    if (v.fTiling && cThreads > 0) {
+    if (v.fTiling) {
+        /* Screen position of the first visible tile, in tile-slots. Threads are
+           packed consecutively from this slot (matching GetTileFromPos), so this
+           is correct whether or not a type-to-search filter is active — unlike
+           nFirstVisibleTile, which holds a (scattered) VM index when searching. */
+        int tileH = (int)sTileSize.y > 0 ? (int)sTileSize.y : gTexH;
+        int firstSpot = (sTilesPerRow > 0)
+                        ? (abs(v.sWheelOffset) / tileH) * sTilesPerRow : 0;
         for (int t = 0; t < cThreads; t++) {
             if (t >= vvmhw.numTiles) break;
             BYTE *src = (BYTE *)vvmhw.pbmTile[t].pvBits;
@@ -160,7 +167,7 @@ void RenderBitmap_SDL(void)
             }
             SDL_UpdateTexture(tex, NULL, argbBuf, gTexW * 4);
 
-            int slot = nFirstVisibleTile + t;
+            int slot = firstSpot + t;
             int col  = (sTilesPerRow > 0) ? slot % sTilesPerRow : 0;
             int row  = (sTilesPerRow > 0) ? slot / sTilesPerRow : t;
             SDL_Rect dest = {col * gTexW,
@@ -168,7 +175,7 @@ void RenderBitmap_SDL(void)
                              gTexW, gTexH};
             SDL_RenderCopy(gSDLRen, tex, NULL, &dest);
 
-            if (sVM >= 0 && slot == sVM) {
+            if (sVM >= 0 && ThreadStuff[t].iThreadVM == sVM) {
                 SDL_SetRenderDrawColor(gSDLRen, 255, 255, 255, 255);
                 SDL_RenderDrawRect(gSDLRen, &dest);
                 SDL_SetRenderDrawColor(gSDLRen, 0, 0, 0, 255);

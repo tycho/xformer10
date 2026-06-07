@@ -221,10 +221,11 @@ void CreateInstanceName(int i, LPSTR lpInstName, BOOL fIncludeType)
         lp = rgpvm[i]->rgvd[0].sz;
     }
 
-    // only take the filename, none of the path
+    // only take the filename, none of the path (accept either separator so the
+    // name is the bare filename on Linux too, where paths use '/')
     for (z = (int)strlen(lp) - 1; z >= 0; z--)
     {
-        if (lp[z] == '\\') break;
+        if (lp[z] == '\\' || lp[z] == '/') break;
     }
 
     if (fIncludeType)

@@ -21,6 +21,8 @@ void linux_get_client_rect(RECT *r);
 extern int GetTileFromPos(int xPos, int yPos, void *ppt);
 void ScrollTiles(void);
 extern void OpenFolders(char *lpCmdLine, int *piFirstVM);
+extern char cGemKeys[];            /* type-to-search filter string (gemul8r.c) */
+void DisplayStatus(int iVM);
 
 static void sigint_handler(int s) { (void)s; vi.fQuitting = TRUE; }
 
@@ -277,8 +279,10 @@ int main(int argc, char **argv)
                 }
             } else if (e.type == SDL_MOUSEWHEEL && v.fTiling && v.cVM > 0
                        && sTilesPerRow > 0 && (int)sTileSize.y > 0) {
-                v.sWheelOffset += e.wheel.y * (int)sTileSize.y;
-                if (v.sWheelOffset > 0) v.sWheelOffset = 0;
+                /* smooth pixel scrolling: ~8px per notch, 64 with "Mouse Wheel
+                   Sensitivity High". ScrollTiles() clamps the offset and re-inits
+                   threads only when the visible row set changes */
+                v.sWheelOffset += e.wheel.y * (v.fWheelSensitive ? 64 : 8);
                 ScrollTiles();
             } else if (e.type == SDL_DROPFILE) {
                 char *path = e.drop.file;
@@ -303,6 +307,30 @@ int main(int argc, char **argv)
                     SDL_free(path);
                 }
             } else if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
+                /* Tiled overview: type the disk/cart name to filter visible VMs
+                   (the cGemKeys match lives in InitThreads). Only plain keys —
+                   leave Ctrl/Alt/Super combos for the menu shortcuts, and let
+                   function/arrow keys (sym has the scancode bit set, > 0x7f)
+                   fall through to the F5-untile etc. handlers below. */
+                if (v.fTiling && e.type == SDL_KEYDOWN
+                    && !(SDL_GetModState() & (KMOD_CTRL | KMOD_ALT | KMOD_GUI))) {
+                    SDL_Keycode k = e.key.keysym.sym;
+                    int l = (int)strlen(cGemKeys);
+                    if (k == SDLK_BACKSPACE) {
+                        if (l) cGemKeys[l - 1] = 0;
+                        v.sWheelOffset = 0; InitThreads(); DisplayStatus(-1);
+                        continue;
+                    } else if (k == SDLK_ESCAPE) {
+                        if (l) { cGemKeys[0] = 0; v.sWheelOffset = 0;
+                                 InitThreads(); DisplayStatus(-1); }
+                        continue;
+                    } else if (k >= 0x20 && k < 0x7f) {
+                        if (l < MAX_PATH - 1) { cGemKeys[l] = (char)k;
+                                                cGemKeys[l + 1] = 0; }
+                        v.sWheelOffset = 0; InitThreads(); DisplayStatus(-1);
+                        continue;
+                    }
+                }
                 int sc = (int)e.key.keysym.scancode;
                 int vk = (sc >= 0 && sc < 512) ? sdl_to_vk[sc] : 0;
                 if (vk && v.cVM > 0) {
@@ -367,6 +395,10 @@ int main(int argc, char **argv)
             for (int t = 0; t < cThreads; t++)
                 SetEvent(ThreadStuff[t].hGoEvent);
             WaitForMultipleObjects(cThreads, hDoneEvent, TRUE, INFINITE);
+            RenderBitmap_SDL();
+        } else if (v.fTiling && !vi.fQuitting) {
+            /* tiled overview with no visible tiles (e.g. a search that matches
+               nothing): still repaint so the view doesn't freeze on a stale frame */
             RenderBitmap_SDL();
         }
     }
