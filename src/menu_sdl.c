@@ -26,7 +26,6 @@
 
 extern void LinuxDoCommand(int idm);
 
-#define FONT_SIZE         14
 #define NUM_TOPS          5
 #define DISK_MENU_IDX     3
 #define NUM_SUBMENUS      2
@@ -34,12 +33,29 @@ extern void LinuxDoCommand(int idm);
 #define IDM_SUB_D1        (-10)
 #define IDM_SUB_D2        (-11)
 #define MAX_ITEMS         16
-#define MENU_ITEM_H       20
-#define MENU_SEP_H        8
-#define MENU_PAD          8
-#define MENU_SHORTCUT_GAP 16
-#define MENU_DROP_MIN_W   160
-#define MENU_CHECK_AREA   16  /* reserved width for checkmark left of label */
+
+/* Runtime DPI-scaled height of the menu bar (declared in menu_sdl.h). Other
+   translation units reference it through the MENU_H macro. */
+int gMenuBarH = MENU_H_BASE;
+
+/* Layout metrics, in pixels. Initialized to 1.0x base values and multiplied by
+   the UI scale in MenuInit(). The metric macros below expand to these variables
+   so the layout code reads the scaled values directly. */
+static int s_fontPx    = 14;
+static int s_itemH     = 20;
+static int s_sepH      = 8;
+static int s_pad       = 8;
+static int s_shortGap  = 16;
+static int s_dropMinW  = 160;
+static int s_checkArea = 16;   /* reserved width for checkmark left of label */
+
+#define FONT_SIZE         s_fontPx
+#define MENU_ITEM_H       s_itemH
+#define MENU_SEP_H        s_sepH
+#define MENU_PAD          s_pad
+#define MENU_SHORTCUT_GAP s_shortGap
+#define MENU_DROP_MIN_W   s_dropMinW
+#define MENU_CHECK_AREA   s_checkArea
 
 static const char *gTopLabels[NUM_TOPS] = { "File", "VM", "Window", "Disk/Cartridge", "Help" };
 static int         gTopX[NUM_TOPS];
@@ -297,6 +313,16 @@ static void DispatchMenuCmd(int idm)
 
 void MenuInit(SDL_Renderer *ren)
 {
+    /* scale all layout metrics for the display DPI (gMenuBarH was already set
+       before the window was created, using the same scale) */
+    s_fontPx    = SDLUIScaled(14);
+    s_itemH     = SDLUIScaled(20);
+    s_sepH      = SDLUIScaled(8);
+    s_pad       = SDLUIScaled(8);
+    s_shortGap  = SDLUIScaled(16);
+    s_dropMinW  = SDLUIScaled(160);
+    s_checkArea = SDLUIScaled(16);
+
     if (TTF_Init() < 0) {
         fprintf(stderr, "MenuInit: TTF_Init failed: %s\n", TTF_GetError());
         return;

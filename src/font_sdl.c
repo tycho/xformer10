@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <fontconfig/fontconfig.h>
+#include <SDL2/SDL.h>
 
 #include "font_sdl.h"
 
@@ -64,6 +65,41 @@ const char *SDLUIFontPath(void)
     }
 
     return cached[0] ? cached : NULL;
+}
+
+float SDLUIScale(void)
+{
+    static int   computed = 0;
+    static float scale    = 1.0f;
+
+    if (computed)
+        return scale;
+    computed = 1;
+
+    /* explicit override (e.g. XFORMER_UI_SCALE=2 for a fractional-scale desktop
+       where the reported DPI doesn't match the compositor's scaling) */
+    const char *env = getenv("XFORMER_UI_SCALE");
+    if (env && env[0]) {
+        float v = (float)atof(env);
+        if (v >= 0.5f && v <= 6.0f) {
+            scale = v;
+            return scale;
+        }
+    }
+
+    /* derive from the panel DPI; 96 DPI == 1.0x */
+    float hdpi = 0.0f;
+    if (SDL_GetDisplayDPI(0, NULL, &hdpi, NULL) == 0 && hdpi > 1.0f)
+        scale = hdpi / 96.0f;
+
+    if (scale < 1.0f) scale = 1.0f;
+    if (scale > 4.0f) scale = 4.0f;
+    return scale;
+}
+
+int SDLUIScaled(int base)
+{
+    return (int)(base * SDLUIScale() + 0.5f);
 }
 
 #endif /* !_WIN32 */

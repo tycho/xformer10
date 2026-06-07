@@ -11,13 +11,25 @@
 #include "sdl_filebrowser.h"
 #include "font_sdl.h"
 
-#define FB_FONT_SIZE 14
-#define FB_OVL_W     600
-#define FB_OVL_H     440
-#define FB_PATH_H     28
-#define FB_ITEM_H     22
-#define FB_PAD         8
-#define FB_INPUT_H    30
+/* Layout metrics hold unscaled (1.0x) base values and are multiplied by the UI
+   scale at the top of SDL_FileBrowserRunEx(); the macro names redirect to them
+   so the drawing/hit-test code below is unchanged. FB_MAX_ENTRIES sizes a
+   static array and must stay a compile-time constant. */
+static int s_fbFont   = 14;
+static int s_fbOvlW   = 600;
+static int s_fbOvlH   = 440;
+static int s_fbPathH  = 28;
+static int s_fbItemH  = 22;
+static int s_fbPad    = 8;
+static int s_fbInputH = 30;
+
+#define FB_FONT_SIZE  s_fbFont
+#define FB_OVL_W      s_fbOvlW
+#define FB_OVL_H      s_fbOvlH
+#define FB_PATH_H     s_fbPathH
+#define FB_ITEM_H     s_fbItemH
+#define FB_PAD        s_fbPad
+#define FB_INPUT_H    s_fbInputH
 #define FB_MAX_ENTRIES 512
 
 typedef struct {
@@ -247,6 +259,15 @@ int SDL_FileBrowserRunEx(SDL_Renderer *ren, SDL_Window *win,
                          const char *start_path, char *out, int sz,
                          const char *exts, int mode)
 {
+    /* scale the dialog and its font for the display DPI */
+    s_fbFont   = SDLUIScaled(14);
+    s_fbOvlW   = SDLUIScaled(600);
+    s_fbOvlH   = SDLUIScaled(440);
+    s_fbPathH  = SDLUIScaled(28);
+    s_fbItemH  = SDLUIScaled(22);
+    s_fbPad    = SDLUIScaled(8);
+    s_fbInputH = SDLUIScaled(30);
+
     const char *fontPath = SDLUIFontPath();
     TTF_Font *font = fontPath ? TTF_OpenFont(fontPath, FB_FONT_SIZE) : NULL;
     if (!font) return 0;

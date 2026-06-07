@@ -17,4 +17,13 @@
    process lifetime. Returns NULL only if no font could be found at all. */
 const char *SDLUIFontPath(void);
 
+/* UI scale factor (>= 1.0) for HiDPI displays. Honors $XFORMER_UI_SCALE if set
+   (0.5..6.0); otherwise derives from the display DPI (hdpi/96, clamped to
+   1.0..4.0). Cached; requires SDL video to be initialized. Used to size the
+   menu bar, menu/file-browser fonts, and the default window. */
+float SDLUIScale(void);
+
+/* Round base * SDLUIScale() to the nearest pixel. */
+int SDLUIScaled(int base);
+
 #endif /* FONT_SDL_H */

@@ -22,11 +22,13 @@
 #include "gemtypes.h"
 #include "atari800.h"
 #include "menu_sdl.h"
+#include "font_sdl.h"
 
 static SDL_Window   *gSDLWin;
 static SDL_Renderer *gSDLRen;
 static SDL_Texture  *gSDLTex;
 static int gTexW, gTexH;
+static int gWinZoom = 3;   /* DPI-scaled integer zoom for the default window */
 
 /* Per-tile textures for tiling mode — avoids single-texture update race */
 #define MAX_TILE_TEX 64
@@ -50,9 +52,28 @@ void linux_get_client_rect(RECT *r)
 BOOL InitDrawing(int dx, int dy, int bpp, HANDLE hwndApp, BOOL fReInit)
 {
     (void)bpp; (void)hwndApp; (void)fReInit;
+
+    /* HiDPI: scale the menu bar and default window zoom for the panel DPI.
+       gMenuBarH must be set before the window is created — the height below and
+       all later layout read it through the MENU_H macro. */
+    float uiScale = SDLUIScale();
+    gMenuBarH = (int)(MENU_H_BASE * uiScale + 0.5f);
+
+    int zoom = (int)(3 * uiScale + 0.5f);
+    if (zoom < 1) zoom = 1;
+    /* keep the initial window within ~90% of the desktop */
+    SDL_DisplayMode dmDesk;
+    if (SDL_GetDesktopDisplayMode(0, &dmDesk) == 0) {
+        while (zoom > 1 &&
+               (dx * zoom > dmDesk.w * 9 / 10 ||
+                dy * zoom + gMenuBarH > dmDesk.h * 9 / 10))
+            zoom--;
+    }
+    gWinZoom = zoom;
+
     gSDLWin = SDL_CreateWindow("Xformer 10",
                                SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                               dx * 3, dy * 3 + MENU_H,
+                               dx * gWinZoom, dy * gWinZoom + MENU_H,
                                SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (!gSDLWin) return FALSE;
     gSDLRen = SDL_CreateRenderer(gSDLWin, -1, SDL_RENDERER_PRESENTVSYNC);
@@ -167,16 +188,21 @@ void RenderBitmap_SDL(void)
         }
         SDL_UpdateTexture(gSDLTex, NULL, argbBuf, gTexW * 4);
 
+        /* Fit the frame to the actual client area below the menu bar. This is
+           used for windowed, fullscreen, and stretch alike, so the picture
+           always tracks the real window size (gWinZoom only sets the initial
+           size at creation) and is never clipped to the upper-left on a HiDPI
+           or resized window. */
         SDL_Rect dest;
-        if (v.fZoomColor || v.fFullScreen) {
+        {
             int winW, winH;
             SDL_GetWindowSize(gSDLWin, &winW, &winH);
             int availW = winW;
             int availH = winH - MENU_H;
             if (availH < 1) availH = 1;
             if (v.fZoomColor) {
-                dest = (SDL_Rect){0, MENU_H, availW, availH};
-            } else {
+                dest = (SDL_Rect){0, MENU_H, availW, availH};   /* stretch */
+            } else {                                            /* aspect-fit */
                 int scaledW = availH * gTexW / gTexH;
                 if (scaledW <= availW)
                     dest = (SDL_Rect){(availW - scaledW) / 2, MENU_H, scaledW, availH};
@@ -185,8 +211,6 @@ void RenderBitmap_SDL(void)
                     dest = (SDL_Rect){0, MENU_H + (availH - scaledH) / 2, availW, scaledH};
                 }
             }
-        } else {
-            dest = (SDL_Rect){0, MENU_H, gTexW * 3, gTexH * 3};
         }
         SDL_RenderCopy(gSDLRen, gSDLTex, NULL, &dest);
     }
