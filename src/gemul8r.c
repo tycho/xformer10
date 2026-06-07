@@ -1199,8 +1199,12 @@ char *GetNextFilename(char *sFile, char *lpCmdLine, int *szCmdLineUsed, char **l
     DWORD dwa = GetFileAttributes(lpF);
     while (dwa != -1 && (dwa & FILE_ATTRIBUTE_DIRECTORY))
     {
-        // now add \* to the directory name to search the files inside it
+        // now add the path separator + * to the directory name to search inside it
+#ifdef _WIN32
         *sFile++ = '\\';
+#else
+        *sFile++ = '/';   // backslash-separated paths don't resolve on Linux
+#endif
         *sFile++ = '*';
         *sFile++ = 0;
 

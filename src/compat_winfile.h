@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <limits.h>
 
 /* File access constants */
 #define GENERIC_READ          0x00000001u
@@ -141,21 +143,43 @@ typedef struct _WIN32_FIND_DATAA {
 #define WIN32_FIND_DATA WIN32_FIND_DATAA
 #endif
 
-/* FindFirstFileA/FindNextFileA — stubbed; no directory enumeration in Phase 1 */
-static inline HANDLE FindFirstFileA(const char *path, WIN32_FIND_DATAA *fd)
-{
-    (void)path; (void)fd;
-    return INVALID_HANDLE_VALUE; // LATER: directory enumeration not implemented
-}
+/* FindFirstFileA/FindNextFileA/FindClose — directory enumeration via
+   opendir/readdir. Callers pass a "<dir>/<wildcard>" pattern (only "*" is ever
+   used in this codebase), so we open <dir> and return every entry; extension
+   filtering is done by the caller. The HANDLE is the underlying DIR*. */
 static inline BOOL FindNextFileA(HANDLE h, WIN32_FIND_DATAA *fd)
 {
-    (void)h; (void)fd;
-    return FALSE; // LATER:
+    DIR *d = (DIR *)h;
+    if (!d) return FALSE;
+    struct dirent *de = readdir(d);
+    if (!de) return FALSE;
+    memset(fd, 0, sizeof *fd);
+    strncpy(fd->cFileName, de->d_name, MAX_PATH - 1);
+    fd->cFileName[MAX_PATH - 1] = '\0';
+    fd->dwFileAttributes = FILE_ATTRIBUTE_ARCHIVE;
+#ifdef DT_DIR
+    if (de->d_type == DT_DIR) fd->dwFileAttributes |= FILE_ATTRIBUTE_DIRECTORY;
+#endif
+    return TRUE;
+}
+static inline HANDLE FindFirstFileA(const char *pattern, WIN32_FIND_DATAA *fd)
+{
+    char dir[PATH_MAX];
+    strncpy(dir, pattern ? pattern : "", sizeof dir - 1);
+    dir[sizeof dir - 1] = '\0';
+    /* accept either separator; strip the trailing wildcard component */
+    for (char *p = dir; *p; p++) if (*p == '\\') *p = '/';
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = '\0';
+    DIR *d = opendir(dir[0] ? dir : ".");
+    if (!d) return INVALID_HANDLE_VALUE;
+    if (!FindNextFileA((HANDLE)d, fd)) { closedir(d); return INVALID_HANDLE_VALUE; }
+    return (HANDLE)d;
 }
 static inline BOOL FindClose(HANDLE h)
 {
-    (void)h;
-    return TRUE; // LATER:
+    if (h && h != INVALID_HANDLE_VALUE) closedir((DIR *)h);
+    return TRUE;
 }
 
 #define FindFirstFile  FindFirstFileA

@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <glob.h>
 #include <limits.h>
@@ -54,7 +55,7 @@ static void joy_update_dir(int new_dir)
     gJoyDir = new_dir;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -121,6 +122,52 @@ int main(void)
         fprintf(stderr, "CreateNewBitmaps failed\n");
         SDL_Quit();
         return 1;
+    }
+
+    /* Command-line ROM/disk/cartridge/folder loading: OpenFolders() recursively
+       walks any directory arguments and loads every valid Atari image it finds,
+       exactly like dragging them onto the window. The args are joined into one
+       quoted, space-separated string so GetNextFilename()'s tokenizer handles
+       paths that contain spaces. */
+    if (argc > 1) {
+        /* Command-line files replace the restored session: drop any VMs that
+           LoadProperties() restored (keeping global settings), then load only
+           what was named on the command line. */
+        int prev = v.cVM;
+        for (int z = 0; z < prev; z++)
+            DeleteVM(v.cVM - 1, FALSE);
+        DeleteVM(-1, TRUE);
+
+        size_t total = 1;
+        for (int i = 1; i < argc; i++)
+            total += strlen(argv[i]) + 3;   /* opening + closing quote + space */
+        char *cmd = malloc(total);
+        if (cmd) {
+            cmd[0] = '\0';
+            for (int i = 1; i < argc; i++) {
+                if (i > 1) strcat(cmd, " ");
+                strcat(cmd, "\"");
+                strcat(cmd, argv[i]);
+                strcat(cmd, "\"");
+            }
+            int iVMcmd = -1;
+            OpenFolders(cmd, &iVMcmd);
+            free(cmd);
+            if (iVMcmd >= 0) {
+                if (v.cVM > 1) {
+                    /* multiple images come up tiled; on Linux the tile renderer
+                       reads each VM's own pvBits, which fMyVideoCardSucks enables
+                       (otherwise the tiles draw with no pixel data) */
+                    v.fTiling = 1;
+                    v.fMyVideoCardSucks = TRUE;
+                    sVM = -1;
+                } else {
+                    v.fTiling = 0;   /* a single file comes up windowed */
+                }
+                SelectInstance(iVMcmd);
+                v.sWheelOffset = 0;
+            }
+        }
     }
 
     if (v.cVM == 0) {
