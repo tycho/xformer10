@@ -149,6 +149,12 @@ static void fb_render(SDL_Renderer *ren, SDL_Window *win, TTF_Font *font,
     int winW, winH;
     SDL_GetWindowSize(win, &winW, &winH);
 
+    /* opaque backdrop over the whole window. The browser runs a nested modal
+       loop and never redraws the emulator, so without a full clear each frame
+       the stale contents of alternating back-buffers flicker through on present. */
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+    SDL_RenderClear(ren);
+
     int ox = (winW - FB_OVL_W) / 2;
     int oy = (winH - FB_OVL_H) / 2;
 

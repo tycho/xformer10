@@ -130,6 +130,9 @@ void RenderBitmap_SDL(void)
 
     static Uint32 argbBuf[X8 * Y8];
 
+    /* clear to black explicitly — the menu code leaves the draw color set to
+       its bar/highlight color, which would otherwise tint the whole window */
+    SDL_SetRenderDrawColor(gSDLRen, 0, 0, 0, 255);
     SDL_RenderClear(gSDLRen);
 
     if (v.fTiling && cThreads > 0) {
