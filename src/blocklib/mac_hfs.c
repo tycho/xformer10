@@ -472,7 +472,7 @@ Lfindit:
             strcpy((char *)sz, &szDir[cchCwd]);
 
             if (strstr((const char *)sz, ":"))
-                *strstr((const char *)sz, ":") = 0;
+                *strstr((char *)sz, ":") = 0;
 
             for (i = 0; i < pdi->cfd; i++)
                 {
