@@ -232,4 +232,12 @@ done:
 SDL_Renderer *GetSDLRenderer(void) { return gSDLRen; }
 SDL_Window   *GetSDLWindow(void)   { return gSDLWin; }
 
+/* Toggle vsync on the existing renderer without recreating it (SDL >= 2.0.18).
+   Used to let turbo mode out-run the display refresh; see IDM_TURBO. */
+void SetSDLVSync(BOOL on)
+{
+    if (gSDLRen)
+        SDL_RenderSetVSync(gSDLRen, on ? 1 : 0);
+}
+
 #endif /* !_WIN32 */

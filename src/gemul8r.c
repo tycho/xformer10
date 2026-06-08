@@ -6449,6 +6449,14 @@ void LinuxDoCommand(int idm)
     case IDM_TURBO:
         fBrakes = !fBrakes;
         uExecSpeed = 0;
+        /* The SDL renderer is created with PRESENTVSYNC, so the per-frame
+           SDL_RenderPresent() blocks until the display's vblank and caps the
+           loop to the refresh rate. That is fine at emulated speed, but it
+           would keep turbo pinned to ~60 fps. Drop vsync while in turbo so the
+           guest can out-run the display (matching the Windows build, which
+           never waits on vsync); restore it at emulated speed for tear-free
+           output. */
+        SetSDLVSync(fBrakes);
         DisplayStatus(v.iVM);
         break;
 
