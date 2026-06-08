@@ -24,6 +24,8 @@ extern void OpenFolders(char *lpCmdLine, int *piFirstVM);
 extern char cGemKeys[];            /* type-to-search filter string (gemul8r.c) */
 void DisplayStatus(int iVM);
 
+#define CPUAVG 60ull   /* jiffies to average the speed % over; must match gemul8r.c */
+
 static void sigint_handler(int s) { (void)s; vi.fQuitting = TRUE; }
 
 static LPARAM make_key_lparam(int sdl_sc, int is_up)
@@ -396,8 +398,31 @@ int main(int argc, char **argv)
                 }
             }
         }
+        /* Throttle rendering to <=70 Hz like the Windows loop: emulating one
+           guest frame per iteration is cheap, but presenting every one just
+           draws duplicate frames. Gating the present is also what makes turbo
+           effective — with vsync dropped in turbo (see IDM_TURBO), the
+           non-render iterations carry no wait at all, so the guest free-runs
+           well past the display refresh rate. */
+        {
+            static Uint64 lastRenderMs;
+            Uint64 nowMs = SDL_GetTicks64();
+            int hz = v.vRefresh + 1;
+            if (hz > 70) hz = 70;
+            if (hz < 1)  hz = 1;
+            if (nowMs - lastRenderMs >= (Uint64)(1000 / hz)) {
+                lastRenderMs = nowMs;
+                fRenderThisTime = TRUE;
+            } else {
+                fRenderThisTime = FALSE;
+            }
+        }
+
+        ULONGLONG FrameBegin = GetCycles();
+        BOOL fRanFrame = FALSE;
+
         if (v.cVM > 0 && cThreads > 0 && !vi.fQuitting) {
-            fRenderThisTime = TRUE;
+            fRanFrame = TRUE;
             for (int t = 0; t < cThreads; t++)
                 SetEvent(ThreadStuff[t].hGoEvent);
             WaitForMultipleObjects(cThreads, hDoneEvent, TRUE, INFINITE);
@@ -454,33 +479,49 @@ int main(int argc, char **argv)
                 }
             }
 
-            RenderBitmap_SDL();
+            if (fRenderThisTime)
+                RenderBitmap_SDL();
         } else if (v.fTiling && !vi.fQuitting) {
             /* tiled overview with no visible tiles (e.g. a search that matches
                nothing): still repaint so the view doesn't freeze on a stale frame */
-            RenderBitmap_SDL();
+            if (fRenderThisTime)
+                RenderBitmap_SDL();
         }
 
-        /* Throttle to the Atari frame rate, NOT the display refresh. The loop
-           emulates one guest frame per iteration, so pacing it only by
-           PRESENTVSYNC would run the guest (and its audio) at 2x on a 120 Hz
-           panel. GetCycles() here is pure wall-clock, so this sleeps until one
-           guest jiffy of real time has passed. It is separate from
-           fRenderThisTime, which only gates sprite output, not speed. Turbo
-           (fBrakes==0) skips the throttle and free-runs (still vsync-capped). */
+        /* Maintain the decaying-average execution time exactly like the Windows
+           loop (gemul8r.c) so the title-bar speed % is meaningful instead of
+           stuck at 0. FrameEnd is taken after the optional render so the sample
+           covers the same work the Windows build measures. */
+        if (fRanFrame) {
+            ULONGLONG FrameEnd = GetCycles();
+            if (uExecSpeed) {
+                uExecSpeed = (uExecSpeed * (CPUAVG - 1)) / CPUAVG;
+                uExecSpeed += (FrameEnd - FrameBegin);
+            } else {
+                uExecSpeed = (FrameEnd - FrameBegin) * CPUAVG;
+            }
+        }
+
+        /* Throttle to the guest frame rate. The loop emulates one guest frame
+           per iteration; GetCycles() is pure wall-clock (CLOCK_MONOTONIC_RAW),
+           so this sleeps until one guest jiffy of real time has elapsed. Audio
+           is decoupled -- it's pushed into SDL's queue and paced by this same
+           loop -- so nothing else gates speed. Turbo (fBrakes==0) skips the wait
+           and free-runs; the IDM_TURBO handler drops vsync so the present can't
+           re-cap it. */
         if (!vi.fQuitting) {
             int pal = (!v.fTiling && v.iVM >= 0 && rgpvm[v.iVM]->fEmuPAL);
             ULONGLONG ulljif = pal ? (PAL_CLK / PAL_FPS) : (NTSC_CLK / NTSC_FPS);
             ULONGLONG ullsec = pal ?  PAL_CLK            :  NTSC_CLK;
             ULONGLONG cCur   = GetCycles() - cLastJif;
 
-            /* only brake when at emulated speed (or idle); cap catch-up to 1s */
+            /* only brake at emulated speed (or when idle); cap catch-up to 1s */
             if ((fBrakes || !cThreads) && cCur < ullsec) {
                 while (cCur < ulljif) {
                     Sleep((cCur < ulljif / 2) ? 8 : 1);   /* sleep, never spin */
                     cCur = GetCycles() - cLastJif;
                 }
-                cLastJif += ulljif;     /* fixed cadence; absorbs vsync jitter */
+                cLastJif += ulljif;     /* fixed cadence; absorbs jitter */
             } else {
                 cLastJif = GetCycles(); /* turbo or fell behind: resync */
             }
