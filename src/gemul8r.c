@@ -6676,9 +6676,11 @@ void LinuxDoCommand(int idm)
         v.fSaveOnExit = !v.fSaveOnExit;
         DisplayStatus(v.iVM);
         break;
-    case IDM_ADDVM1:
+    case IDM_ADDVM1:        /* Atari 800   (type 0) */
+    case IDM_ADDVM1 + 1:    /* Atari 800XL (type 1) */
+    case IDM_ADDVM1 + 2:    /* Atari 130XE (type 2) */
     {
-        int vmNew = AddVM(0, TRUE, FALSE);
+        int vmNew = AddVM(idm - IDM_ADDVM1, TRUE, FALSE);
         if (vmNew >= 0)
         {
             if (FInitVM(vmNew) && ColdStart(vmNew))

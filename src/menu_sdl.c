@@ -32,7 +32,7 @@ extern void LinuxDoCommand(int idm);
 #define MAX_SUB_ITEMS     8
 #define IDM_SUB_D1        (-10)
 #define IDM_SUB_D2        (-11)
-#define MAX_ITEMS         16
+#define MAX_ITEMS         20
 
 /* Runtime DPI-scaled height of the menu bar (declared in menu_sdl.h). Other
    translation units reference it through the MENU_H macro. */
@@ -101,6 +101,8 @@ kDef[NUM_TOPS][MAX_ITEMS] = {
     {
         {"Open Folder...",             NULL, IDM_OPENFOLDER, 0},
         {"Add Atari 800",              NULL, IDM_ADDVM1,     0},
+        {"Add Atari 800XL",            NULL, IDM_ADDVM1 + 1, 0},
+        {"Add Atari 130XE",            NULL, IDM_ADDVM1 + 2, 0},
         {"Delete VM",                  NULL, IDM_DELVM,      1},
         {NULL,                         NULL, 0,              0},
         {"New Session",                NULL, IDM_NEW,        0},
@@ -169,7 +171,7 @@ kDef[NUM_TOPS][MAX_ITEMS] = {
     },
 };
 
-static const int kItemCount[NUM_TOPS] = {16, 14, 15, 5, 5};
+static const int kItemCount[NUM_TOPS] = {18, 14, 15, 5, 5};
 
 static const struct { const char *lbl; const char *sc; int idm; int needsVM; }
 kSubDef[NUM_SUBMENUS][MAX_SUB_ITEMS] = {
