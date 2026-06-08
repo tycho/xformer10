@@ -487,12 +487,20 @@ static inline void PostQuitMessage(int code) { (void)code; }
 
 /* Timing stubs */
 static inline void Sleep(DWORD ms) { usleep((unsigned long)ms * 1000); }
+/* Use CLOCK_MONOTONIC_RAW, not CLOCK_MONOTONIC. On WSL2 the kernel's
+   CLOCK_MONOTONIC (and CLOCK_REALTIME) can run with a wrong frequency scaling
+   -- measured ~10% fast on this host -- while CLOCK_MONOTONIC_RAW reflects the
+   true TSC rate and matches the audio hardware clock. Pacing the emulator off
+   the fast clock makes the guest run 10% too fast and overproduce audio until
+   WSLg's pulse/RDP sink overflows and stalls. RAW is unslewed by NTP, which is
+   exactly what we want for a fixed-rate emulation clock. (On native Linux RAW
+   and MONOTONIC agree, so this is a no-op there.) */
 static inline DWORD GetTickCount(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
     return (DWORD)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 static inline BOOL QueryPerformanceCounter(LARGE_INTEGER *li) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
     if (li) li->QuadPart = (LONGLONG)ts.tv_sec * 1000000000LL + ts.tv_nsec;
     return TRUE;
 }
