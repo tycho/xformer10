@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <glob.h>
 #include <limits.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <SDL2/SDL.h>
 #include "gemtypes.h"
@@ -27,6 +28,45 @@ void DisplayStatus(int iVM);
 #define CPUAVG 60ull   /* jiffies to average the speed % over; must match gemul8r.c */
 
 static void sigint_handler(int s) { (void)s; vi.fQuitting = TRUE; }
+
+/* Clock-sanity watchdog. The whole emulator's timing -- frame pacing and audio
+   production rate -- rides GetCycles(), i.e. CLOCK_MONOTONIC_RAW. If the host's
+   timebase is badly broken (e.g. WSL2's CLOCK_MONOTONIC running ~10% off RAW,
+   which silently breaks game speed and makes the audio device overrun), there is
+   nothing the emulator can do to stay accurate. This thread quietly compares
+   CLOCK_MONOTONIC against CLOCK_MONOTONIC_RAW for a few seconds; if they diverge
+   far beyond any sane jitter/NTP slew, it flags the main thread to warn and quit.
+   On a healthy host the two agree and the thread just exits after ~15s. */
+static volatile int   gClockInsane;    /* set by the watchdog when drift is gross */
+static double         gClockDriftPct;  /* measured MONOTONIC vs RAW drift, for the message */
+
+static double ts_sec(clockid_t clk)
+{
+    struct timespec t;
+    clock_gettime(clk, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
+}
+
+static int clock_sanity_thread(void *unused)
+{
+    (void)unused;
+    double mono0 = ts_sec(CLOCK_MONOTONIC);
+    double raw0  = ts_sec(CLOCK_MONOTONIC_RAW);
+    for (int i = 0; i < 15 && !vi.fQuitting; i++) {
+        SDL_Delay(1000);
+        double mono = ts_sec(CLOCK_MONOTONIC) - mono0;
+        double raw  = ts_sec(CLOCK_MONOTONIC_RAW) - raw0;
+        if (raw < 2.0)                       /* let a couple seconds average out jitter */
+            continue;
+        double drift = (mono - raw) / raw;   /* fractional rate difference */
+        if (drift < -0.01 || drift > 0.01) { /* >1%: far beyond NTP's 500ppm cap */
+            gClockDriftPct = drift * 100.0;
+            gClockInsane = 1;
+            return 0;
+        }
+    }
+    return 0;
+}
 
 static LPARAM make_key_lparam(int sdl_sc, int is_up)
 {
@@ -206,6 +246,9 @@ int main(int argc, char **argv)
     SDL_ShowCursor(SDL_DISABLE);
 
     signal(SIGINT, sigint_handler);
+
+    /* watch the host timebase for gross drift (see clock_sanity_thread) */
+    SDL_CreateThread(clock_sanity_thread, "clocksanity", NULL);
 
     /* wall-clock anchor for frame pacing (see throttle at the end of the loop) */
     ULONGLONG cLastJif = GetCycles();
@@ -537,6 +580,24 @@ int main(int argc, char **argv)
                 int ids = (v.fTiling && sVM >= 0) ? sVM : (v.fTiling ? -1 : v.iVM);
                 DisplayStatus(ids);
             }
+        }
+
+        /* clock-sanity watchdog tripped: the host timebase is badly broken, so
+           neither speed nor audio can be kept correct -- warn and quit */
+        if (gClockInsane) {
+            char msg[640];
+            snprintf(msg, sizeof msg,
+                "The system clock is broken: CLOCK_MONOTONIC is drifting %.1f%% "
+                "from CLOCK_MONOTONIC_RAW.\n\n"
+                "Emulation speed and audio cannot be kept accurate on this host. "
+                "This usually means a time-sync daemon is fighting the hardware "
+                "clock; on WSL2, 'sudo systemctl mask systemd-timesyncd' and a "
+                "restart typically fixes it.\n\nExiting.",
+                gClockDriftPct);
+            fprintf(stderr, "xformer10: %s\n", msg);
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                "xformer10: system clock fault", msg, NULL);
+            vi.fQuitting = TRUE;
         }
     }
 
