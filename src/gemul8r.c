@@ -6399,40 +6399,6 @@ Lhib:
 #include "sdl_filebrowser.h"
 #include "ddlib_sdl.h"
 
-/* Open url in the session user's browser (handles running-as-root case). */
-static void LinuxOpenURL(const char *url)
-{
-    char rdir[256] = "";
-    char user[64]  = "";
-    glob_t gl;
-
-    if (glob("/run/user/[0-9]*", GLOB_NOSORT, NULL, &gl) == 0) {
-        for (size_t i = 0; i < gl.gl_pathc; i++) {
-            const char *p = strrchr(gl.gl_pathv[i], '/');
-            if (!p) continue;
-            uid_t uid = (uid_t)atoi(p + 1);
-            if (uid == 0) continue;           /* skip root's own runtime dir */
-            struct passwd *pw = getpwuid(uid);
-            if (!pw) continue;
-            strncpy(rdir, gl.gl_pathv[i], sizeof(rdir) - 1);
-            strncpy(user, pw->pw_name,    sizeof(user)  - 1);
-            break;
-        }
-        globfree(&gl);
-    }
-
-    char cmd[512];
-    if (user[0] && rdir[0]) {
-        snprintf(cmd, sizeof cmd,
-            "runuser -u %s -- env XDG_RUNTIME_DIR=%s WAYLAND_DISPLAY=wayland-0"
-            " xdg-open '%s' &",
-            user, rdir, url);
-    } else {
-        snprintf(cmd, sizeof cmd, "xdg-open '%s' &", url);
-    }
-    system(cmd);
-}
-
 static BOOL LinuxPickFile(char *out, int sz)
 {
     return (BOOL)SDL_FileBrowserRun(GetSDLRenderer(), GetSDLWindow(),
@@ -6835,7 +6801,7 @@ void LinuxDoCommand(int idm)
             (idm == IDM_WEB_EMULATORS) ? "http://www.emulators.com/" :
             (idm == IDM_WEB_FREE)      ? "https://github.com/softmac/xformer10" :
                                          "http://www.emulators.com/xformer.htm";
-        LinuxOpenURL(url);
+        SDL_OpenURL(url);
         break;
     }
     case IDM_ABOUT:
