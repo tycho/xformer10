@@ -31,9 +31,15 @@
 HWAVEOUT hWave;
 #else
 static SDL_AudioDeviceID gAudioDev;
-static volatile int gSndWriteIdx;
-static volatile int gSndReadIdx;
 static BOOL gAudioAvail = FALSE;
+
+/* Audio uses SDL's push/queue model (SDL_QueueAudio): the emulation thread hands
+   each finished guest frame straight to SDL's playback queue, and the main loop
+   is paced purely by the wall-clock throttle. This keeps emulation speed fully
+   decoupled from the audio device clock, so a jittery or stalled device can never
+   drag the framerate. Cap the queued backlog at ~SNDBUFS frames so a slow device
+   can't grow latency without bound; deeper than that and we drop a frame's audio. */
+#define SND_MAX_QUEUE_BYTES (SNDBUFS * SAMPLES_NTSC * 2)
 #endif
 //FILE *fp; // for debug printing of the wave buffer
 
@@ -178,8 +184,10 @@ void SoundDoneCallback(void *candy, int iCurSample)
                 }
             }
 #else
-            if ((gSndWriteIdx - gSndReadIdx) < SNDBUFS) {
-                sCurBuf = gSndWriteIdx % SNDBUFS;
+            /* push/queue mode: a single accumulator buffer (slot 0). Skip this
+               frame's audio if the device queue is already deep, to bound latency. */
+            if (SDL_GetQueuedAudioSize(gAudioDev) <= SND_MAX_QUEUE_BYTES) {
+                sCurBuf = 0;
                 sOldSample = 0;
             }
 #endif
@@ -451,8 +459,11 @@ void SoundDoneCallback(void *candy, int iCurSample)
 #ifdef _WIN32
             waveOutWrite(hWave, &pwhdr[sCurBuf], sizeof(WAVEHDR));
 #else
-            SDL_MemoryBarrierRelease();
-            ++gSndWriteIdx;
+            /* hand the finished frame to SDL's playback queue (copies synchronously,
+               so slot 0 is free to reuse for the next frame). PAL queues 960 samples,
+               NTSC 800 -- both 48 kHz -- so this also fixes PAL audio, which the old
+               callback path never played. */
+            SDL_QueueAudio(gAudioDev, pwhdr[sCurBuf].lpData, SAMPLES_PER_VOICE * 2);
 #endif
 
             //ODS("Write (%d) %08x @ %llu\n", sCurBuf, &pwhdr[sCurBuf], GetJiffies());
@@ -949,25 +960,6 @@ void UninitSound()
     vi.fWaveOutput = FALSE;
 }
 
-#ifndef _WIN32
-static void SDLAudioCallback(void *ud, Uint8 *stream, int len)
-{
-    (void)ud;
-    if (gSndWriteIdx > gSndReadIdx) {
-        SDL_MemoryBarrierAcquire();
-        int idx = gSndReadIdx % SNDBUFS;
-        int bufBytes = SAMPLES_NTSC * 2;
-        int copy = len < bufBytes ? len : bufBytes;
-        memcpy(stream, vi.rgbSndBufN[idx], copy);
-        if (copy < len)
-            memset(stream + copy, 0, len - copy);
-        ++gSndReadIdx;
-    } else {
-        memset(stream, 0, len);
-    }
-}
-#endif
-
 //
 void InitSound()
 {
@@ -1059,8 +1051,6 @@ void InitSound()
             vi.rgwhdrP[iHdr].dwBufferLength = SAMPLES_PAL * 2;
             vi.rgwhdrP[iHdr].dwFlags = WHDR_DONE;
         }
-        gSndWriteIdx = 0;
-        gSndReadIdx  = 0;
         if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
             fprintf(stderr, "SDL audio init failed: %s -- audio disabled\n",
                     SDL_GetError());
@@ -1074,7 +1064,7 @@ void InitSound()
         want.format = AUDIO_S16SYS;
         want.channels = 1;
         want.samples = SAMPLES_NTSC;
-        want.callback = SDLAudioCallback;
+        want.callback = NULL;            /* push/queue mode: we feed via SDL_QueueAudio */
         gAudioDev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
         if (gAudioDev)
         {
