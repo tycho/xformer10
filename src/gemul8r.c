@@ -80,6 +80,21 @@
 #pragma warning(disable:4706) // assignment within conditional expression
 #pragma warning(disable:4152) // function/data pointer conversion
 
+/* Portable CPU architecture name (for the About box). MSVC's _M_* macros aren't
+   defined by GCC/Clang, so pair each with its __* equivalent -- otherwise the
+   non-Windows build falls through to "unknown". */
+#if   defined(_M_AMD64) || defined(__x86_64__)
+#  define XF_ARCH_STR "x64"
+#elif defined(_M_IX86)  || defined(__i386__)
+#  define XF_ARCH_STR "x86"
+#elif defined(_M_ARM64) || defined(__aarch64__)
+#  define XF_ARCH_STR "ARM64"
+#elif defined(_M_ARM)   || defined(__arm__)
+#  define XF_ARCH_STR "ARM"
+#else
+#  define XF_ARCH_STR "unknown"
+#endif
+
 // you remember our main data structures from gemtypes.h, right?
 
 PROPS v;                  // global persistable stuff
@@ -4032,17 +4047,7 @@ void ShowAbout()
         vi.szAppName,
         __DATE__,
         sizeof(void *) * 8,
-#if defined(_M_AMD64)
-        "x64",
-#elif defined(_M_IX86)
-        "x86",
-#elif defined(_M_ARM)
-        "ARM",
-#elif defined(_M_ARM64)
-        "ARM64",
-#else
-        "",        // unknown
-#endif
+        XF_ARCH_STR,
 //        oi.dwMajorVersion, oi.dwMinorVersion,
 //        oi.dwBuildNumber & 65535,
         rgchVer
@@ -6805,8 +6810,9 @@ void LinuxDoCommand(int idm)
         break;
     }
     case IDM_ABOUT:
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
-            "About Xformer",
+    {
+        char about[700];
+        snprintf(about, sizeof about,
             "Xformer 10\n"
             "Atari 8-bit Emulator\n"
             "\n"
@@ -6819,9 +6825,18 @@ void LinuxDoCommand(int idm)
             "Vibe ported by Derek Nelson and Claude Code\n"
             "\n"
             "Claude Code versions used:\n"
-            "  Claude Sonnet 4.6 (Phases 1-13+)",
-            GetSDLWindow());
+            "  Claude Sonnet 4.6 (Phases 1-13+)\n"
+            "\n"
+            "-------------------------\n"
+            "Build %s  %d-bit %s  (SDL %d.%d.%d)",
+            __DATE__, (int)(sizeof(void *) * 8), XF_ARCH_STR,
+            SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL);
+        if (SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION,
+                "About Xformer", about, GetSDLWindow()) != 0)
+            fprintf(stderr, "About: could not show message box: %s\n",
+                    SDL_GetError());
         break;
+    }
     }
 }
 #endif /* !_WIN32 */
@@ -8958,17 +8973,7 @@ LRESULT CALLBACK About(
                 vi.szAppName,
                 __DATE__,
                 sizeof(void *) * 8,
-#if defined(_M_AMD64)
-                "x64",
-#elif defined(_M_IX86)
-                "x86",
-#elif defined(_M_ARM)
-                "ARM",
-#elif defined(_M_ARM64)
-                "ARM64",
-#else
-                "",        // unknown
-#endif
+                XF_ARCH_STR,
                 oi.dwMajorVersion, oi.dwMinorVersion,
                 oi.dwBuildNumber & 65535,
                 rgchVer,
