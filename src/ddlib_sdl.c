@@ -111,11 +111,28 @@ static SDL_Thread   *gWorkers[MAX_RENDER_WORKERS];
 static int           gNumWorkers;
 static volatile int  gWorkersQuit;
 
-static void compose_drain(void)   /* run jobs until the queue is empty */
+/* A dispatch runs one of two phases. CLEAR must finish (join) before COMPOSE
+   begins -- otherwise a worker clearing a band could wipe a tile another worker
+   just composed there. */
+enum { POOL_COMPOSE, POOL_CLEAR };
+static volatile int  gPoolMode;
+static int           gClearBands, gClearBandRows;
+
+static void pool_work(void)   /* drain the current phase's queue (work-stealing) */
 {
     int i;
-    while ((i = SDL_AtomicAdd(&gJobNext, 1)) < gJobCount)
-        compose_tile(gJobs[i].src, gJobs[i].dx, gJobs[i].dy);
+    if (gPoolMode == POOL_CLEAR) {
+        while ((i = SDL_AtomicAdd(&gJobNext, 1)) < gClearBands) {
+            int y0 = i * gClearBandRows;
+            int y1 = y0 + gClearBandRows;
+            if (y1 > gComposeH) y1 = gComposeH;
+            memset(gCompose + (size_t)y0 * gComposeW, 0,
+                   (size_t)(y1 - y0) * gComposeW * sizeof(Uint32));
+        }
+    } else {
+        while ((i = SDL_AtomicAdd(&gJobNext, 1)) < gJobCount)
+            compose_tile(gJobs[i].src, gJobs[i].dx, gJobs[i].dy);
+    }
 }
 
 static int compose_worker(void *arg)
@@ -124,7 +141,7 @@ static int compose_worker(void *arg)
     for (;;) {
         SDL_SemWait(gGoSem);
         if (gWorkersQuit) return 0;
-        compose_drain();
+        pool_work();
         SDL_SemPost(gDoneSem);
     }
 }
@@ -158,36 +175,37 @@ static void compose_pool_quit(void)
 }
 
 /* Convert all queued tiles into the compose buffer, in parallel when it pays. */
-static void compose_dispatch(void)
+static void pool_phase(void)   /* run the current phase across the pool + this thread */
 {
-    if (gJobCount <= 0) return;
+    SDL_AtomicSet(&gJobNext, 0);
+    if (gNumWorkers == 0) { pool_work(); return; }   /* serial fallback */
+    for (int i = 0; i < gNumWorkers; i++) SDL_SemPost(gGoSem);
+    pool_work();                                      /* the main thread pulls its share */
+    for (int i = 0; i < gNumWorkers; i++) SDL_SemWait(gDoneSem);
+}
 
+/* Clear the compose buffer then convert all queued tiles into it -- both phases
+   parallel. The full-screen clear is O(window) and was the remaining serial cost
+   once the conversion was parallelized. Per-phase ms saved for XF_RENDER_PROF. */
+static double gClearMs, gComposeMs;
+static void compose_run(void)
+{
     Uint64 t0 = SDL_GetPerformanceCounter();
 
-    if (gNumWorkers == 0 || gJobCount < 4) {  /* not worth the sync overhead */
-        for (int i = 0; i < gJobCount; i++)
-            compose_tile(gJobs[i].src, gJobs[i].dx, gJobs[i].dy);
-    } else {
-        SDL_AtomicSet(&gJobNext, 0);
-        for (int i = 0; i < gNumWorkers; i++) SDL_SemPost(gGoSem);
-        compose_drain();                      /* the main thread pulls its share */
-        for (int i = 0; i < gNumWorkers; i++) SDL_SemWait(gDoneSem);
-    }
+    gPoolMode = POOL_CLEAR;
+    gClearBandRows = 64;
+    gClearBands = (gComposeH + gClearBandRows - 1) / gClearBandRows;
+    pool_phase();
 
-    /* set XF_RENDER_PROF=1 to log the tiled-view conversion cost once a second */
-    static int prof = -1;
-    if (prof < 0) prof = getenv("XF_RENDER_PROF") ? 1 : 0;
-    if (prof) {
-        static Uint64 last;
-        Uint64 now = SDL_GetTicks64();
-        if (now - last >= 1000) {
-            last = now;
-            double ms = (double)(SDL_GetPerformanceCounter() - t0)
-                      * 1e3 / (double)SDL_GetPerformanceFrequency();
-            fprintf(stderr, "[render] compose %d tiles in %.2f ms (%d workers)\n",
-                    gJobCount, ms, gNumWorkers);
-        }
-    }
+    Uint64 t1 = SDL_GetPerformanceCounter();
+
+    gPoolMode = POOL_COMPOSE;
+    pool_phase();
+
+    Uint64 t2 = SDL_GetPerformanceCounter();
+    double f = 1e3 / (double)SDL_GetPerformanceFrequency();
+    gClearMs   = (double)(t1 - t0) * f;
+    gComposeMs = (double)(t2 - t1) * f;
 }
 
 void linux_set_window_title(const char *s)
@@ -300,8 +318,6 @@ void RenderBitmap_SDL(void)
         int clientH = (winH > MENU_H) ? winH - MENU_H : 0;
 
         if (compose_ensure(winW, clientH)) {
-            memset(gCompose, 0, (size_t)gComposeW * gComposeH * sizeof(Uint32));
-
             /* Screen position of the first visible tile, in tile-slots. Threads are
                packed consecutively from this slot (matching GetTileFromPos), so this
                is correct whether or not a type-to-search filter is active — unlike
@@ -342,9 +358,11 @@ void RenderBitmap_SDL(void)
                 if (sVM >= 0 && ThreadStuff[t].iThreadVM == sVM) { focusX = dx; focusY = dy; }
             }
 
-            compose_dispatch();                  /* parallel palette->ARGB conversion */
+            compose_run();                       /* parallel clear + palette->ARGB convert */
 
+            Uint64 tu0 = SDL_GetPerformanceCounter();
             SDL_UpdateTexture(gComposeTex, NULL, gCompose, gComposeW * (int)sizeof(Uint32));
+            Uint64 tu1 = SDL_GetPerformanceCounter();
             SDL_Rect dst = {0, MENU_H, gComposeW, gComposeH};
             SDL_RenderCopy(gSDLRen, gComposeTex, NULL, &dst);
 
@@ -354,6 +372,21 @@ void RenderBitmap_SDL(void)
                 SDL_SetRenderDrawColor(gSDLRen, 255, 255, 255, 255);
                 SDL_RenderDrawRect(gSDLRen, &fr);
                 SDL_SetRenderDrawColor(gSDLRen, 0, 0, 0, 255);
+            }
+
+            /* XF_RENDER_PROF=1: per-frame render breakdown, once a second */
+            static int prof = -1;
+            if (prof < 0) prof = getenv("XF_RENDER_PROF") ? 1 : 0;
+            if (prof) {
+                static Uint64 last;
+                Uint64 now = SDL_GetTicks64();
+                if (now - last >= 1000) {
+                    last = now;
+                    double f = 1e3 / (double)SDL_GetPerformanceFrequency();
+                    fprintf(stderr,
+                        "[render] %d tiles: clear %.2f + compose %.2f + upload %.2f ms (%d workers)\n",
+                        gJobCount, gClearMs, gComposeMs, (double)(tu1 - tu0) * f, gNumWorkers);
+                }
             }
         }
     } else {
