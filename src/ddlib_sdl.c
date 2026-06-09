@@ -36,6 +36,64 @@ static SDL_Texture *gTileTex[MAX_TILE_TEX];
 
 extern BYTE rgbRainbow[];  /* atari800.c: interleaved [R,G,B] * 256, 6-bit values (0-63) */
 
+/* Tiled-view compositing. Instead of converting + uploading + drawing each tile
+   separately (N palette->ARGB conversions on the main thread, plus N texture
+   uploads and N draw calls -- crippling at hundreds of tiles, especially over
+   WSLg's virtualized GPU), we composite every visible tile into one client-area
+   ARGB framebuffer and present it with a single UpdateTexture + RenderCopy --
+   the SDL equivalent of the Windows build's single BitBlt. The per-tile
+   conversion is split across a worker pool so it scales with cores. */
+static Uint32      *gCompose;        /* client-area ARGB framebuffer (CPU side) */
+static SDL_Texture *gComposeTex;     /* matching streaming texture (GPU side) */
+static int          gComposeW, gComposeH;
+
+/* 6-bit palette index -> 0xAARRGGBB, expanding each 6-bit channel to 8 bits. */
+static inline Uint32 pal_to_argb(BYTE p)
+{
+    BYTE r = rgbRainbow[p * 3], g = rgbRainbow[p * 3 + 1], b = rgbRainbow[p * 3 + 2];
+    return (Uint32)0xFF000000
+         | (Uint32)((r << 2) | (r >> 4)) << 16
+         | (Uint32)((g << 2) | (g >> 4)) <<  8
+         | (Uint32)((b << 2) | (b >> 4));
+}
+
+/* Convert one gTexW x gTexH tile from 8-bit palette (src) into the compose
+   framebuffer at client-area pixel (dx,dy), clipped to [0,gComposeW)x[0,gComposeH).
+   Tiles never overlap, so this is safe to run concurrently across tiles. */
+static void compose_tile(const BYTE *src, int dx, int dy)
+{
+    int ry0 = dy < 0 ? -dy : 0;
+    int ry1 = (dy + gTexH > gComposeH) ? (gComposeH - dy) : gTexH;
+    int cx0 = dx < 0 ? -dx : 0;
+    int cx1 = (dx + gTexW > gComposeW) ? (gComposeW - dx) : gTexW;
+    for (int ry = ry0; ry < ry1; ry++) {
+        const BYTE *s = src + (size_t)ry * gTexW + cx0;
+        Uint32 *d = gCompose + (size_t)(dy + ry) * gComposeW + (dx + cx0);
+        for (int cx = cx0; cx < cx1; cx++)
+            *d++ = pal_to_argb(*s++);
+    }
+}
+
+/* (Re)allocate the compose framebuffer + texture for a client area of w x h. */
+static BOOL compose_ensure(int w, int h)
+{
+    if (w < 1 || h < 1) return FALSE;
+    if (gCompose && gComposeTex && w == gComposeW && h == gComposeH) return TRUE;
+
+    Uint32 *buf = (Uint32 *)realloc(gCompose, (size_t)w * h * sizeof(Uint32));
+    if (!buf) return FALSE;
+    gCompose = buf;
+
+    if (gComposeTex) { SDL_DestroyTexture(gComposeTex); gComposeTex = NULL; }
+    gComposeTex = SDL_CreateTexture(gSDLRen, SDL_PIXELFORMAT_ARGB8888,
+                                    SDL_TEXTUREACCESS_STREAMING, w, h);
+    if (!gComposeTex) return FALSE;
+
+    gComposeW = w;
+    gComposeH = h;
+    return TRUE;
+}
+
 void linux_set_window_title(const char *s)
 {
     if (gSDLWin) SDL_SetWindowTitle(gSDLWin, s);
@@ -118,6 +176,8 @@ void UninitDrawing(BOOL fFinal)
         for (int i = 0; i < MAX_TILE_TEX; i++) {
             if (gTileTex[i]) { SDL_DestroyTexture(gTileTex[i]); gTileTex[i] = NULL; }
         }
+        if (gComposeTex) { SDL_DestroyTexture(gComposeTex); gComposeTex = NULL; }
+        free(gCompose); gCompose = NULL; gComposeW = gComposeH = 0;
         if (gSDLTex) { SDL_DestroyTexture(gSDLTex);   gSDLTex = NULL; }
         if (gSDLRen) { SDL_DestroyRenderer(gSDLRen);  gSDLRen = NULL; }
         if (gSDLWin) { SDL_DestroyWindow(gSDLWin);    gSDLWin = NULL; }
@@ -136,48 +196,50 @@ void RenderBitmap_SDL(void)
     SDL_RenderClear(gSDLRen);
 
     if (v.fTiling) {
-        /* Screen position of the first visible tile, in tile-slots. Threads are
-           packed consecutively from this slot (matching GetTileFromPos), so this
-           is correct whether or not a type-to-search filter is active — unlike
-           nFirstVisibleTile, which holds a (scattered) VM index when searching. */
-        int tileH = (int)sTileSize.y > 0 ? (int)sTileSize.y : gTexH;
-        int firstSpot = (sTilesPerRow > 0)
-                        ? (abs(v.sWheelOffset) / tileH) * sTilesPerRow : 0;
-        for (int t = 0; t < cThreads; t++) {
-            if (t >= vvmhw.numTiles) break;
-            BYTE *src = (BYTE *)vvmhw.pbmTile[t].pvBits;
-            if (!src) continue;
+        /* Composite every visible tile into one client-area framebuffer, then
+           present it with a single UpdateTexture + RenderCopy. */
+        int winW, winH;
+        SDL_GetWindowSize(gSDLWin, &winW, &winH);
+        int clientH = (winH > MENU_H) ? winH - MENU_H : 0;
 
-            /* Ensure a per-tile texture exists */
-            if (t < MAX_TILE_TEX && !gTileTex[t]) {
-                gTileTex[t] = SDL_CreateTexture(gSDLRen, SDL_PIXELFORMAT_ARGB8888,
-                                                SDL_TEXTUREACCESS_STREAMING, gTexW, gTexH);
+        if (compose_ensure(winW, clientH)) {
+            memset(gCompose, 0, (size_t)gComposeW * gComposeH * sizeof(Uint32));
+
+            /* Screen position of the first visible tile, in tile-slots. Threads are
+               packed consecutively from this slot (matching GetTileFromPos), so this
+               is correct whether or not a type-to-search filter is active — unlike
+               nFirstVisibleTile, which holds a (scattered) VM index when searching. */
+            int tileH = (int)sTileSize.y > 0 ? (int)sTileSize.y : gTexH;
+            int firstSpot = (sTilesPerRow > 0)
+                            ? (abs(v.sWheelOffset) / tileH) * sTilesPerRow : 0;
+
+            int focusX = -1, focusY = 0;   /* hovered tile's client-area top-left */
+
+            for (int t = 0; t < cThreads; t++) {
+                if (t >= vvmhw.numTiles) break;
+                BYTE *src = (BYTE *)vvmhw.pbmTile[t].pvBits;
+                if (!src) continue;
+
+                int slot = firstSpot + t;
+                int col  = (sTilesPerRow > 0) ? slot % sTilesPerRow : 0;
+                int row  = (sTilesPerRow > 0) ? slot / sTilesPerRow : t;
+                int dx   = col * gTexW;
+                int dy   = v.sWheelOffset + row * gTexH;   /* client coords, 0 = below menu */
+
+                compose_tile(src, dx, dy);
+
+                if (sVM >= 0 && ThreadStuff[t].iThreadVM == sVM) { focusX = dx; focusY = dy; }
             }
-            SDL_Texture *tex = (t < MAX_TILE_TEX && gTileTex[t]) ? gTileTex[t] : gSDLTex;
 
-            for (int i = 0; i < gTexW * gTexH; i++) {
-                BYTE p = src[i];
-                BYTE r = rgbRainbow[p * 3    ];
-                BYTE g = rgbRainbow[p * 3 + 1];
-                BYTE b = rgbRainbow[p * 3 + 2];
-                argbBuf[i] = (Uint32)0xFF000000
-                    | (Uint32)((r << 2) | (r >> 4)) << 16
-                    | (Uint32)((g << 2) | (g >> 4)) <<  8
-                    | (Uint32)((b << 2) | (b >> 4));
-            }
-            SDL_UpdateTexture(tex, NULL, argbBuf, gTexW * 4);
+            SDL_UpdateTexture(gComposeTex, NULL, gCompose, gComposeW * (int)sizeof(Uint32));
+            SDL_Rect dst = {0, MENU_H, gComposeW, gComposeH};
+            SDL_RenderCopy(gSDLRen, gComposeTex, NULL, &dst);
 
-            int slot = firstSpot + t;
-            int col  = (sTilesPerRow > 0) ? slot % sTilesPerRow : 0;
-            int row  = (sTilesPerRow > 0) ? slot / sTilesPerRow : t;
-            SDL_Rect dest = {col * gTexW,
-                             MENU_H + v.sWheelOffset + row * gTexH,
-                             gTexW, gTexH};
-            SDL_RenderCopy(gSDLRen, tex, NULL, &dest);
-
-            if (sVM >= 0 && ThreadStuff[t].iThreadVM == sVM) {
+            /* highlight the hovered tile (window coords) */
+            if (focusX >= 0) {
+                SDL_Rect fr = {focusX, MENU_H + focusY, gTexW, gTexH};
                 SDL_SetRenderDrawColor(gSDLRen, 255, 255, 255, 255);
-                SDL_RenderDrawRect(gSDLRen, &dest);
+                SDL_RenderDrawRect(gSDLRen, &fr);
                 SDL_SetRenderDrawColor(gSDLRen, 0, 0, 0, 255);
             }
         }
