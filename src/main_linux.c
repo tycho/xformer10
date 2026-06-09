@@ -464,11 +464,17 @@ int main(int argc, char **argv)
         ULONGLONG FrameBegin = GetCycles();
         BOOL fRanFrame = FALSE;
 
+        static int rprof = -1;
+        if (rprof < 0) rprof = getenv("XF_RENDER_PROF") ? 1 : 0;
+        Uint64 _e0 = 0, _e1 = 0, _r0 = 0, _r1 = 0;   /* emul / render timestamps */
+
         if (v.cVM > 0 && cThreads > 0 && !vi.fQuitting) {
             fRanFrame = TRUE;
+            if (rprof) _e0 = SDL_GetPerformanceCounter();
             for (int t = 0; t < cThreads; t++)
                 SetEvent(ThreadStuff[t].hGoEvent);
             WaitForMultipleObjects(cThreads, hDoneEvent, TRUE, INFINITE);
+            if (rprof) _e1 = SDL_GetPerformanceCounter();
 
             /* A VM stopped executing this frame (vi.fExecuting got reset): it ran
                a KIL — the auto-detect path's signal that this app needs a
@@ -522,13 +528,29 @@ int main(int argc, char **argv)
                 }
             }
 
-            if (fRenderThisTime)
+            if (fRenderThisTime) {
+                if (rprof) _r0 = SDL_GetPerformanceCounter();
                 RenderBitmap_SDL();
+                if (rprof) _r1 = SDL_GetPerformanceCounter();
+            }
         } else if (v.fTiling && !vi.fQuitting) {
             /* tiled overview with no visible tiles (e.g. a search that matches
                nothing): still repaint so the view doesn't freeze on a stale frame */
             if (fRenderThisTime)
                 RenderBitmap_SDL();
+        }
+
+        /* XF_RENDER_PROF: emulation (90-VM fork-join) vs render (incl. the vsync
+           present) split, once a second -- pairs with ddlib's clear/compose/upload. */
+        if (rprof && _e1 > _e0) {
+            static Uint64 last;
+            Uint64 now = SDL_GetTicks64();
+            if (now - last >= 1000) {
+                last = now;
+                double f = 1e3 / (double)SDL_GetPerformanceFrequency();
+                fprintf(stderr, "[frame] emul %.2f + render %.2f ms (render incl. present)\n",
+                        (double)(_e1 - _e0) * f, _r1 > _r0 ? (double)(_r1 - _r0) * f : 0.0);
+            }
         }
 
         /* Maintain the decaying-average execution time exactly like the Windows
