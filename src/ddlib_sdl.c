@@ -94,6 +94,102 @@ static BOOL compose_ensure(int w, int h)
     return TRUE;
 }
 
+/* ---- compose worker pool ----------------------------------------------------
+   The palette->ARGB conversion is the dominant CPU cost of the tiled view, and
+   it parallelizes perfectly: each tile writes a disjoint region of the compose
+   buffer. A small persistent pool drains a shared job queue (work-stealing via
+   an atomic index) while the main thread joins in, so the conversion scales with
+   cores. (The emulation worker threads are blocked waiting for the next frame
+   during render, so the cores are free.) */
+#define MAX_RENDER_WORKERS 32
+typedef struct { const BYTE *src; int dx, dy; } ComposeJob;
+static ComposeJob   *gJobs;
+static int           gJobCap, gJobCount;
+static SDL_atomic_t  gJobNext;
+static SDL_sem      *gGoSem, *gDoneSem;
+static SDL_Thread   *gWorkers[MAX_RENDER_WORKERS];
+static int           gNumWorkers;
+static volatile int  gWorkersQuit;
+
+static void compose_drain(void)   /* run jobs until the queue is empty */
+{
+    int i;
+    while ((i = SDL_AtomicAdd(&gJobNext, 1)) < gJobCount)
+        compose_tile(gJobs[i].src, gJobs[i].dx, gJobs[i].dy);
+}
+
+static int compose_worker(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        SDL_SemWait(gGoSem);
+        if (gWorkersQuit) return 0;
+        compose_drain();
+        SDL_SemPost(gDoneSem);
+    }
+}
+
+static void compose_pool_init(void)
+{
+    if (gGoSem) return;                       /* once */
+    gGoSem   = SDL_CreateSemaphore(0);
+    gDoneSem = SDL_CreateSemaphore(0);
+    if (!gGoSem || !gDoneSem) return;         /* fall back to serial dispatch */
+    int n = SDL_GetCPUCount() - 1;            /* + the main thread = all cores */
+    if (n < 1) n = 1;
+    if (n > MAX_RENDER_WORKERS) n = MAX_RENDER_WORKERS;
+    for (int i = 0; i < n; i++) {
+        gWorkers[i] = SDL_CreateThread(compose_worker, "compose", NULL);
+        if (gWorkers[i]) gNumWorkers++;
+    }
+}
+
+static void compose_pool_quit(void)
+{
+    if (gNumWorkers) {
+        gWorkersQuit = 1;
+        for (int i = 0; i < gNumWorkers; i++) SDL_SemPost(gGoSem);
+        for (int i = 0; i < gNumWorkers; i++) SDL_WaitThread(gWorkers[i], NULL);
+        gNumWorkers = 0;
+    }
+    if (gGoSem)   { SDL_DestroySemaphore(gGoSem);   gGoSem = NULL; }
+    if (gDoneSem) { SDL_DestroySemaphore(gDoneSem); gDoneSem = NULL; }
+    free(gJobs); gJobs = NULL; gJobCap = 0;
+}
+
+/* Convert all queued tiles into the compose buffer, in parallel when it pays. */
+static void compose_dispatch(void)
+{
+    if (gJobCount <= 0) return;
+
+    Uint64 t0 = SDL_GetPerformanceCounter();
+
+    if (gNumWorkers == 0 || gJobCount < 4) {  /* not worth the sync overhead */
+        for (int i = 0; i < gJobCount; i++)
+            compose_tile(gJobs[i].src, gJobs[i].dx, gJobs[i].dy);
+    } else {
+        SDL_AtomicSet(&gJobNext, 0);
+        for (int i = 0; i < gNumWorkers; i++) SDL_SemPost(gGoSem);
+        compose_drain();                      /* the main thread pulls its share */
+        for (int i = 0; i < gNumWorkers; i++) SDL_SemWait(gDoneSem);
+    }
+
+    /* set XF_RENDER_PROF=1 to log the tiled-view conversion cost once a second */
+    static int prof = -1;
+    if (prof < 0) prof = getenv("XF_RENDER_PROF") ? 1 : 0;
+    if (prof) {
+        static Uint64 last;
+        Uint64 now = SDL_GetTicks64();
+        if (now - last >= 1000) {
+            last = now;
+            double ms = (double)(SDL_GetPerformanceCounter() - t0)
+                      * 1e3 / (double)SDL_GetPerformanceFrequency();
+            fprintf(stderr, "[render] compose %d tiles in %.2f ms (%d workers)\n",
+                    gJobCount, ms, gNumWorkers);
+        }
+    }
+}
+
 void linux_set_window_title(const char *s)
 {
     if (gSDLWin) SDL_SetWindowTitle(gSDLWin, s);
@@ -176,6 +272,7 @@ void UninitDrawing(BOOL fFinal)
         for (int i = 0; i < MAX_TILE_TEX; i++) {
             if (gTileTex[i]) { SDL_DestroyTexture(gTileTex[i]); gTileTex[i] = NULL; }
         }
+        compose_pool_quit();
         if (gComposeTex) { SDL_DestroyTexture(gComposeTex); gComposeTex = NULL; }
         free(gCompose); gCompose = NULL; gComposeW = gComposeH = 0;
         if (gSDLTex) { SDL_DestroyTexture(gSDLTex);   gSDLTex = NULL; }
@@ -215,6 +312,13 @@ void RenderBitmap_SDL(void)
 
             int focusX = -1, focusY = 0;   /* hovered tile's client-area top-left */
 
+            compose_pool_init();
+            if (gJobCap < cThreads) {        /* grow the job list to fit */
+                ComposeJob *nj = (ComposeJob *)realloc(gJobs, (size_t)cThreads * sizeof(ComposeJob));
+                if (nj) { gJobs = nj; gJobCap = cThreads; }
+            }
+            gJobCount = 0;
+
             for (int t = 0; t < cThreads; t++) {
                 if (t >= vvmhw.numTiles) break;
                 BYTE *src = (BYTE *)vvmhw.pbmTile[t].pvBits;
@@ -226,10 +330,19 @@ void RenderBitmap_SDL(void)
                 int dx   = col * gTexW;
                 int dy   = v.sWheelOffset + row * gTexH;   /* client coords, 0 = below menu */
 
-                compose_tile(src, dx, dy);
+                if (gJobCount < gJobCap) {
+                    gJobs[gJobCount].src = src;
+                    gJobs[gJobCount].dx  = dx;
+                    gJobs[gJobCount].dy  = dy;
+                    gJobCount++;
+                } else {
+                    compose_tile(src, dx, dy);   /* alloc shortfall: do it inline */
+                }
 
                 if (sVM >= 0 && ThreadStuff[t].iThreadVM == sVM) { focusX = dx; focusY = dy; }
             }
+
+            compose_dispatch();                  /* parallel palette->ARGB conversion */
 
             SDL_UpdateTexture(gComposeTex, NULL, gCompose, gComposeW * (int)sizeof(Uint32));
             SDL_Rect dst = {0, MENU_H, gComposeW, gComposeH};
