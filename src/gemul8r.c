@@ -4013,10 +4013,10 @@ void ShowAbout()
         "Copyright (C) 1986-2021 Darek Mihocka.\n"
         "All Rights Reserved.\n\n"
 
-#ifdef XFORMER
+        /* Atari OS and BASIC attribution is a permission requirement -- always
+           show it, never gate it behind a build flag. */
         "Atari OS and BASIC used with permission.\n"
         "Copyright (C) 1979-1984 Atari Corp.\n\n"
-#endif
 
         "Many thanks to: "
         "Steven Noonan, "
@@ -6818,6 +6818,9 @@ void LinuxDoCommand(int idm)
             "\n"
             "Copyright (C) Darek Mihocka and Danny Miller\n"
             "http://www.emulators.com/\n"
+            "\n"
+            "Atari OS and BASIC used with permission.\n"
+            "Copyright (C) 1979-1984 Atari Corp.\n"
             "\n"
             "-------------------------\n"
             "Linux/SDL2 port\n"
