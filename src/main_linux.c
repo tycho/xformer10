@@ -1,11 +1,13 @@
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32)
 #include <unistd.h>
 #include <glob.h>
+#endif
 #include <limits.h>
 #include <time.h>
 #include <sys/stat.h>
