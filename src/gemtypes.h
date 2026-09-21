@@ -81,6 +81,24 @@
 #pragma intrinsic(memcpy)
 #pragma intrinsic(memset)
 
+#ifdef SDL2_ENABLED
+/* The SDL build has no real Win32 HWND for the emulator window (vi.hWnd is a
+   dummy), so window-geometry and title calls in shared code must go to the SDL
+   window, exactly as compat_win.h routes them on Linux. Without this, the real
+   GetClientRect fails against the fake handle and leaves the RECT as stack
+   garbage, silently breaking every layout computation that consumes it. */
+void linux_get_client_rect(RECT *r);
+void linux_set_window_title(const char *s);
+static __inline BOOL XFSDLGetClientRect(HWND hwnd, RECT *r)
+    { (void)hwnd; if (r) linux_get_client_rect(r); return TRUE; }
+static __inline BOOL XFSDLSetWindowText(HWND hwnd, const char *s)
+    { (void)hwnd; linux_set_window_title(s); return TRUE; }
+#undef  GetClientRect
+#define GetClientRect  XFSDLGetClientRect
+#undef  SetWindowText
+#define SetWindowText  XFSDLSetWindowText
+#endif /* SDL2_ENABLED */
+
 #else /* !_WIN32 */
 
 #include "compat_win.h"

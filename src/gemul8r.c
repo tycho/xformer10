@@ -4304,9 +4304,14 @@ LRESULT CALLBACK WndProc(
     case WM_CREATE:
         vi.hdc = GetDC(hWnd);
         
-        v.vRefresh = GetDeviceCaps(vi.hdc, VREFRESH);   // monitor refresh rate
-        if (v.vRefresh <= 1)
-            v.vRefresh = 60;    // some drivers return 0 or 1 for default, assume that means 60. !!! What *does* default mean?
+        {
+        int vr = GetDeviceCaps(vi.hdc, VREFRESH);   // monitor refresh rate
+        if (vr <= 1)
+            vr = 60;    // some drivers return 0 or 1 for default, assume that means 60. !!! What *does* default mean?
+        if (vr > 127)
+            vr = 127;   // vRefresh is a signed 8-bit bitfield; 128+ Hz would wrap negative and break the render-rate gate
+        v.vRefresh = vr;
+        }
 
         SetTextAlign(vi.hdc, TA_NOUPDATECP);
         SetTextColor(vi.hdc, RGB(0,255,0));  // set green text

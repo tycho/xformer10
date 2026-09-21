@@ -163,8 +163,13 @@ int main(int argc, char **argv)
 
     {   /* query display refresh rate; fallback 60 Hz */
         SDL_DisplayMode dm;
-        v.vRefresh = (SDL_GetCurrentDisplayMode(0, &dm) == 0 && dm.refresh_rate > 1)
-                     ? dm.refresh_rate : 60;
+        int rr = (SDL_GetCurrentDisplayMode(0, &dm) == 0 && dm.refresh_rate > 1)
+                 ? dm.refresh_rate : 60;
+        /* v.vRefresh is a signed 8-bit bitfield (PROPS layout is persisted, so
+           it can't be widened): a 128+ Hz display would wrap negative and
+           collapse the render-rate gate below to 1 fps. The gate caps at 70 Hz
+           anyway, so clamping loses nothing. */
+        v.vRefresh = rr > 127 ? 127 : rr;
     }
 
     {   /* compute tile capacity from full display size so resize never needs CreateNewBitmaps */
@@ -562,15 +567,23 @@ int main(int argc, char **argv)
         }
 
         /* XF_RENDER_PROF: emulation (90-VM fork-join) vs render (incl. the vsync
-           present) split, once a second -- pairs with ddlib's clear/compose/upload. */
-        if (rprof && _e1 > _e0) {
+           present) split, once a second -- pairs with ddlib's clear/compose/upload.
+           Also counts loop iterations and rendered frames per second, which is the
+           first thing to check when pacing feels wrong: it should read ~60/~60. */
+        if (rprof) {
             static Uint64 last;
+            static int nLoops, nRenders;
+            nLoops++;
+            if (fRenderThisTime) nRenders++;
             Uint64 now = SDL_GetTicks64();
             if (now - last >= 1000) {
                 last = now;
                 double f = 1e3 / (double)SDL_GetPerformanceFrequency();
-                fprintf(stderr, "[frame] emul %.2f + render %.2f ms (render incl. present)\n",
-                        (double)(_e1 - _e0) * f, _r1 > _r0 ? (double)(_r1 - _r0) * f : 0.0);
+                fprintf(stderr, "[frame] emul %.2f + render %.2f ms (render incl. present), %d loops/s %d renders/s\n",
+                        _e1 > _e0 ? (double)(_e1 - _e0) * f : 0.0,
+                        _r1 > _r0 ? (double)(_r1 - _r0) * f : 0.0,
+                        nLoops, nRenders);
+                nLoops = nRenders = 0;
             }
         }
 
