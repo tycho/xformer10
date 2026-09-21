@@ -14,10 +14,10 @@
 
 ****************************************************************************/
 
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
+#include <SDL_ttf.h>
 #include <stdio.h>
 #include "gemtypes.h"
 #include "menu_sdl.h"
@@ -794,4 +794,4 @@ int MenuHandleEvent(SDL_Event *e)
     }
 }
 
-#endif /* !_WIN32 */
+#endif /* SDL2_ENABLED */

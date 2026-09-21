@@ -1537,7 +1537,7 @@ void CalcIntegerScale()
         returns the conventional value NULL.
 
 ****************************************************************************/
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(SDL2_ENABLED)
 int CALLBACK WinMain(
     HINSTANCE hInstance,
     HINSTANCE hPrevInstance,
@@ -2357,7 +2357,7 @@ int CALLBACK WinMain(
 
     return (int)(INT_PTR)(msg.wParam); // Returns the value from PostQuitMessage
 }
-#endif /* _WIN32 - WinMain */
+#endif /* _WIN32 && !SDL2_ENABLED - WinMain */
 
 int PrintScreenStats()
 {
@@ -4285,7 +4285,7 @@ void ChangeDisplay(int x, int y)
 ****************************************************************************/
 
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(SDL2_ENABLED)
 LRESULT CALLBACK WndProc(
         HWND hWnd,     // window handle
         UINT message,      // type of message
@@ -6394,13 +6394,11 @@ Lhib:
 
     return (DefWindowProc(hWnd, message, uParam, lParam));
 }
-#endif /* _WIN32 - WndProc */
+#endif /* _WIN32 && !SDL2_ENABLED - WndProc */
 
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 #include <stdio.h>
 #include <string.h>
-#include <glob.h>
-#include <pwd.h>
 #include "sdl_filebrowser.h"
 #include "ddlib_sdl.h"
 
@@ -6464,10 +6462,8 @@ void LinuxDoCommand(int idm)
 
     case IDM_TILE:
         v.fTiling = v.fTiling ? 0 : 1;  /* avoid signed 1-bit bitfield becoming -1 */
-#ifndef _WIN32
-        /* Linux has no pTiledBits (no DirectDraw); force per-tile pvBits path */
+        /* the SDL port has no pTiledBits (no DirectDraw); force per-tile pvBits path */
         if (v.fTiling) v.fMyVideoCardSucks = TRUE;
-#endif
         if (v.fTiling) {
             sVM = -1;
             v.sWheelOffset = 0;
@@ -6840,7 +6836,7 @@ void LinuxDoCommand(int idm)
     }
     }
 }
-#endif /* !_WIN32 */
+#endif /* SDL2_ENABLED */
 
 //
 //   FUNCTION: OpenTheFile(HWND hwnd, HWND hwndEdit)

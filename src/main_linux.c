@@ -7,6 +7,9 @@
 #if !defined(_WIN32)
 #include <unistd.h>
 #include <glob.h>
+#else
+#include <direct.h>
+#define strcasecmp _stricmp
 #endif
 #include <limits.h>
 #include <time.h>
@@ -38,10 +41,13 @@ static void sigint_handler(int s) { (void)s; vi.fQuitting = TRUE; }
    nothing the emulator can do to stay accurate. This thread quietly compares
    CLOCK_MONOTONIC against CLOCK_MONOTONIC_RAW for a few seconds; if they diverge
    far beyond any sane jitter/NTP slew, it flags the main thread to warn and quit.
-   On a healthy host the two agree and the thread just exits after ~15s. */
+   On a healthy host the two agree and the thread just exits after ~15s.
+   Windows has a single QPC timebase, so there is nothing to cross-check there
+   and the watchdog is POSIX-only. */
 static volatile int   gClockInsane;    /* set by the watchdog when drift is gross */
 static double         gClockDriftPct;  /* measured MONOTONIC vs RAW drift, for the message */
 
+#ifndef _WIN32
 static double ts_sec(clockid_t clk)
 {
     struct timespec t;
@@ -69,6 +75,7 @@ static int clock_sanity_thread(void *unused)
     }
     return 0;
 }
+#endif /* !_WIN32 */
 
 static LPARAM make_key_lparam(int sdl_sc, int is_up)
 {
@@ -115,11 +122,19 @@ int main(int argc, char **argv)
     }
 
     {
+#ifdef _WIN32
+        const char *base = getenv("APPDATA");
+        if (!base) base = ".";
+        snprintf(vi.szWindowsDir, sizeof(vi.szWindowsDir),
+                 "%s\\xformer", base);
+        _mkdir(vi.szWindowsDir);
+#else
         const char *home = getenv("HOME");
         if (!home) home = "/tmp";
         snprintf(vi.szWindowsDir, sizeof(vi.szWindowsDir),
                  "%s/.config/xformer", home);
         mkdir(vi.szWindowsDir, 0755);
+#endif
     }
 
     // initialize our clock
@@ -228,6 +243,7 @@ int main(int argc, char **argv)
         }
     }
 
+#ifndef _WIN32
     setenv("SDL_AUDIODRIVER", "pulseaudio", 1);
     {
         glob_t gl;
@@ -239,6 +255,7 @@ int main(int argc, char **argv)
         }
         globfree(&gl);
     }
+#endif
 
     InitSound();
     InitThreads();
@@ -249,8 +266,10 @@ int main(int argc, char **argv)
 
     signal(SIGINT, sigint_handler);
 
+#ifndef _WIN32
     /* watch the host timebase for gross drift (see clock_sanity_thread) */
     SDL_CreateThread(clock_sanity_thread, "clocksanity", NULL);
+#endif
 
     /* wall-clock anchor for frame pacing (see throttle at the end of the loop) */
     ULONGLONG cLastJif = GetCycles();
@@ -634,4 +653,4 @@ int main(int argc, char **argv)
     return 0;
 }
 
-#endif /* !_WIN32 */
+#endif /* SDL2_ENABLED */

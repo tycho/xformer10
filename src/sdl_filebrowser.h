@@ -1,8 +1,8 @@
 #ifndef SDL_FILEBROWSER_H
 #define SDL_FILEBROWSER_H
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
+#include <SDL_ttf.h>
 
 SDL_Renderer *GetSDLRenderer(void);   /* defined in ddlib_sdl.c */
 SDL_Window   *GetSDLWindow(void);     /* defined in ddlib_sdl.c */
@@ -19,5 +19,5 @@ int SDL_FileBrowserRun(SDL_Renderer *ren, SDL_Window *win,
 int SDL_FileBrowserRunEx(SDL_Renderer *ren, SDL_Window *win,
                          const char *start_path, char *out, int sz,
                          const char *exts, int mode);
-#endif /* !_WIN32 */
+#endif /* SDL2_ENABLED */
 #endif /* SDL_FILEBROWSER_H */

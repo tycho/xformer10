@@ -1,4 +1,4 @@
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 
 #include <SDL2/SDL.h>
 #include "gemtypes.h"
@@ -156,4 +156,4 @@ SHORT sdl_get_async_key_state(int vk)
     return state[sc] ? (SHORT)0x8000 : 0;
 }
 
-#endif /* !_WIN32 */
+#endif /* SDL2_ENABLED */

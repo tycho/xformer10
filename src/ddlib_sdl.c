@@ -15,7 +15,7 @@
 
 ****************************************************************************/
 
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 
 /* SDL2/SDL.h must come before gemtypes.h to avoid __inline redefinition conflict with arm_neon.h */
 #include <SDL2/SDL.h>
@@ -126,7 +126,8 @@ static void pool_work(void)   /* drain the current phase's queue (work-stealing)
             int y0 = i * gClearBandRows;
             int y1 = y0 + gClearBandRows;
             if (y1 > gComposeH) y1 = gComposeH;
-            memset(gCompose + (size_t)y0 * gComposeW, 0,
+            /* cast: common.h maps memset to __stosb(unsigned char *) on x64 MSVC */
+            memset((BYTE *)(gCompose + (size_t)y0 * gComposeW), 0,
                    (size_t)(y1 - y0) * gComposeW * sizeof(Uint32));
         }
     } else {
@@ -448,4 +449,4 @@ void SetSDLVSync(BOOL on)
         SDL_RenderSetVSync(gSDLRen, on ? 1 : 0);
 }
 
-#endif /* !_WIN32 */
+#endif /* SDL2_ENABLED */

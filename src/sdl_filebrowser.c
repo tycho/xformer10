@@ -1,15 +1,87 @@
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_ttf.h>
-#include <dirent.h>
+#include <SDL_ttf.h>
 #include <sys/stat.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
+#ifndef _WIN32
+#include <dirent.h>
 #include <libgen.h>
+#else
+#include <windows.h>
+#endif
 #include "sdl_filebrowser.h"
 #include "font_sdl.h"
+
+#ifdef _WIN32
+/* Just enough POSIX for the directory-walking code below: a dirent shim over
+   FindFirstFile, dirname() for Windows paths, and the usual CRT renames. */
+
+#ifndef PATH_MAX
+#define PATH_MAX MAX_PATH
+#endif
+#define strcasecmp _stricmp
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif
+
+struct dirent { char d_name[MAX_PATH]; };
+
+typedef struct {
+    HANDLE           h;
+    WIN32_FIND_DATAA fd;
+    int              pending;   /* fd holds an entry not yet returned */
+    struct dirent    de;
+} DIR;
+
+static DIR *opendir(const char *path)
+{
+    char pat[PATH_MAX + 4];
+    DIR *dp = calloc(1, sizeof(DIR));
+    if (!dp) return NULL;
+    snprintf(pat, sizeof pat, "%s\\*", path);
+    dp->h = FindFirstFileA(pat, &dp->fd);
+    if (dp->h == INVALID_HANDLE_VALUE) { free(dp); return NULL; }
+    dp->pending = 1;
+    return dp;
+}
+
+static struct dirent *readdir(DIR *dp)
+{
+    if (!dp->pending && !FindNextFileA(dp->h, &dp->fd))
+        return NULL;
+    dp->pending = 0;
+    strncpy(dp->de.d_name, dp->fd.cFileName, MAX_PATH - 1);
+    dp->de.d_name[MAX_PATH - 1] = '\0';
+    return &dp->de;
+}
+
+static void closedir(DIR *dp)
+{
+    FindClose(dp->h);
+    free(dp);
+}
+
+/* dirname(3) that understands both separators and drive roots:
+   "C:\a\b" -> "C:\a", "C:\a" -> "C:\", "C:\" -> "C:\" */
+static char *dirname(char *p)
+{
+    size_t n = strlen(p);
+    while (n > 1 && (p[n-1] == '\\' || p[n-1] == '/')
+           && !(n == 3 && p[1] == ':'))
+        p[--n] = '\0';
+    char *s1 = strrchr(p, '\\');
+    char *s2 = strrchr(p, '/');
+    char *s  = s1 > s2 ? s1 : s2;
+    if (!s)               { strcpy(p, "."); return p; }
+    if (s == p)           { s[1] = '\0';    return p; }   /* "\foo" -> "\" */
+    if (s - p == 2 && p[1] == ':') { s[1] = '\0'; return p; } /* "C:\foo" -> "C:\" */
+    *s = '\0';
+    return p;
+}
+#endif /* _WIN32 */
 
 /* Layout metrics hold unscaled (1.0x) base values and are multiplied by the UI
    scale at the top of SDL_FileBrowserRunEx(); the macro names redirect to them
@@ -37,6 +109,19 @@ typedef struct {
     int  is_dir;
 } FbEntry;
 
+#ifdef _WIN32
+/* Returns the user's profile directory, or the system drive root. */
+static const char *fb_default_dir(void)
+{
+    const char *home = getenv("USERPROFILE");
+    if (home && home[0]) {
+        struct stat st;
+        if (stat(home, &st) == 0 && S_ISDIR(st.st_mode))
+            return home;
+    }
+    return "C:\\";
+}
+#else
 /* Returns the best available home directory, skipping /root when a real
    user home under /home/ can be found. */
 static const char *fb_default_dir(void)
@@ -79,6 +164,7 @@ static const char *fb_default_dir(void)
 
     return home ? home : "/";
 }
+#endif /* _WIN32 */
 
 static int fb_ext_ok_ex(const char *name, const char *exts)
 {
@@ -533,4 +619,4 @@ int SDL_FileBrowserRun(SDL_Renderer *ren, SDL_Window *win,
     return SDL_FileBrowserRunEx(ren, win, start_path, out, sz,
                                 ".atr,.atx,.xfd", 0);
 }
-#endif /* !_WIN32 */
+#endif /* SDL2_ENABLED */

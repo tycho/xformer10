@@ -3,7 +3,13 @@
    atari800.c, so they are invisible to xvideo.c and xsio.c that call them.
    This file provides external definitions WITHOUT including atari800.h so that
    the conflicting 'static inline' declaration from that header cannot override
-   the external linkage of these definitions. */
+   the external linkage of these definitions.
+
+   MSVC keeps real __forceinline semantics and emits its own out-of-line copies
+   with external linkage from atari800.c, so these stubs would be duplicate
+   definitions there — they are GCC/Clang-only. */
+
+#ifndef _MSC_VER
 
 #include <stdint.h>
 
@@ -20,3 +26,5 @@ extern BOOL PokeBAtariMON(void *candy, ADDR addr, BYTE b);
 
 BYTE PeekBAtari(void *candy, ADDR addr)         { return PeekBAtariMON(candy, addr); }
 BOOL PokeBAtari(void *candy, ADDR addr, BYTE b) { return PokeBAtariMON(candy, addr, b); }
+
+#endif /* !_MSC_VER */

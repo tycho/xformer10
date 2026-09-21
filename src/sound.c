@@ -19,7 +19,7 @@
 
 ****************************************************************************/
 
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 #include <SDL2/SDL.h>
 #endif
 #include "gemtypes.h" // main include file
@@ -27,7 +27,7 @@
 #include "atari8.vm/atari800.h"
 #endif
 
-#ifdef _WIN32
+#ifndef SDL2_ENABLED
 HWAVEOUT hWave;
 #else
 static SDL_AudioDeviceID gAudioDev;
@@ -112,7 +112,7 @@ __inline int SqrOfPhase(ULONG x)
 
 #endif
 
-#ifdef _WIN32
+#ifndef SDL2_ENABLED
 void CALLBACK MyWaveOutProc(
     HWAVEOUT  hwo,
     UINT      uMsg,
@@ -141,7 +141,7 @@ void CALLBACK MyWaveOutProc(
     }
 #endif
 }
-#endif /* _WIN32 */
+#endif /* !SDL2_ENABLED */
 
 // WRITE SOME AUDIO TO THE WAVE BUFFER
 // This is OK not being thread safe, because only one thread is allowed in at a time, and we never switch which
@@ -175,7 +175,7 @@ void SoundDoneCallback(void *candy, int iCurSample)
         {
             wCONSOL |= 8;  // !!! periodically reset the internal speaker if an app forgets to, so it doesn't distort sound forever
 
-#ifdef _WIN32
+#ifndef SDL2_ENABLED
             for (int i = 0; i < SNDBUFS; i++)
             {
                 if (pwhdr[i].dwFlags & WHDR_DONE) {
@@ -201,7 +201,7 @@ void SoundDoneCallback(void *candy, int iCurSample)
         }
 
         // we should never try to go back in time
-#ifdef _WIN32
+#ifndef SDL2_ENABLED
         assert(iCurSample >= sOldSample);
 #endif
 
@@ -456,7 +456,7 @@ void SoundDoneCallback(void *candy, int iCurSample)
         if (iCurSample == SAMPLES_PER_VOICE)
         {
             pwhdr[sCurBuf].dwFlags &= ~WHDR_DONE;
-#ifdef _WIN32
+#ifndef SDL2_ENABLED
             waveOutWrite(hWave, &pwhdr[sCurBuf], sizeof(WAVEHDR));
 #else
             /* hand the finished frame to SDL's playback queue (copies synchronously,
@@ -934,7 +934,7 @@ void SoundDoneCallback(void *candy, int iCurSample)
 
 void UninitSound()
 {
-#ifdef _WIN32
+#ifndef SDL2_ENABLED
     if (hWave)
         {
         int iHdr;
@@ -965,7 +965,7 @@ void InitSound()
 {
     UninitSound();
 
-#ifdef _WIN32
+#ifndef SDL2_ENABLED
     {
     WAVEOUTCAPS woc;
     int i, iMac = 0;

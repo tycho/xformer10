@@ -1147,7 +1147,7 @@ void UnlockSurface();
 void ClearSurface();
 BOOL FChangePaletteEntries(BYTE iPalette, int count, RGBQUAD *ppq);
 BOOL FCyclePalette(BOOL fForward);
-#ifndef _WIN32
+#ifdef SDL2_ENABLED
 void RenderBitmap_SDL(void);
 #endif
 
