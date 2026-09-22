@@ -27,6 +27,15 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
 endif()
 
 #
+# Use LTO for non-Debug builds
+#
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+	add_compile_options(
+		$<$<NOT:$<CONFIG:Debug>>:-flto=thin>
+	)
+endif()
+
+#
 # Build all vendored libraries statically unless overridden explicitly.
 #
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build dependencies as static libraries" FORCE)
