@@ -47,30 +47,47 @@ static Uint32      *gCompose;        /* client-area ARGB framebuffer (CPU side) 
 static SDL_Texture *gComposeTex;     /* matching streaming texture (GPU side) */
 static int          gComposeW, gComposeH;
 
-/* 6-bit palette index -> 0xAARRGGBB, expanding each 6-bit channel to 8 bits. */
-static inline Uint32 pal_to_argb(BYTE p)
+/* Palette index -> 0xAARRGGBB lookup table, each 6-bit channel expanded to 8
+   bits. Rebuilt once per rendered frame from rgbRainbow (256 entries: a few
+   microseconds), which is negligible next to the millions of pixels converted
+   through it -- and keeps it correct should the palette ever become dynamic. */
+static Uint32 gPalLUT[256];
+
+static void pal_lut_build(void)
 {
-    BYTE r = rgbRainbow[p * 3], g = rgbRainbow[p * 3 + 1], b = rgbRainbow[p * 3 + 2];
-    return (Uint32)0xFF000000
-         | (Uint32)((r << 2) | (r >> 4)) << 16
-         | (Uint32)((g << 2) | (g >> 4)) <<  8
-         | (Uint32)((b << 2) | (b >> 4));
+    for (int p = 0; p < 256; p++) {
+        BYTE r = rgbRainbow[p * 3], g = rgbRainbow[p * 3 + 1], b = rgbRainbow[p * 3 + 2];
+        gPalLUT[p] = (Uint32)0xFF000000
+                   | (Uint32)((r << 2) | (r >> 4)) << 16
+                   | (Uint32)((g << 2) | (g >> 4)) <<  8
+                   | (Uint32)((b << 2) | (b >> 4));
+    }
 }
 
 /* Convert one gTexW x gTexH tile from 8-bit palette (src) into the compose
    framebuffer at client-area pixel (dx,dy), clipped to [0,gComposeW)x[0,gComposeH).
-   Tiles never overlap, so this is safe to run concurrently across tiles. */
+   Tiles never overlap, so this is safe to run concurrently across tiles. The
+   inner loop is one table load + one store per pixel; it is the hottest line in
+   the tiled view, so keep it that way. */
 static void compose_tile(const BYTE *src, int dx, int dy)
 {
     int ry0 = dy < 0 ? -dy : 0;
     int ry1 = (dy + gTexH > gComposeH) ? (gComposeH - dy) : gTexH;
     int cx0 = dx < 0 ? -dx : 0;
     int cx1 = (dx + gTexW > gComposeW) ? (gComposeW - dx) : gTexW;
+    const Uint32 *lut = gPalLUT;
     for (int ry = ry0; ry < ry1; ry++) {
         const BYTE *s = src + (size_t)ry * gTexW + cx0;
         Uint32 *d = gCompose + (size_t)(dy + ry) * gComposeW + (dx + cx0);
-        for (int cx = cx0; cx < cx1; cx++)
-            *d++ = pal_to_argb(*s++);
+        int n = cx1 - cx0;
+        for (; n >= 4; n -= 4, s += 4, d += 4) {
+            d[0] = lut[s[0]];
+            d[1] = lut[s[1]];
+            d[2] = lut[s[2]];
+            d[3] = lut[s[3]];
+        }
+        while (n-- > 0)
+            *d++ = lut[*s++];
     }
 }
 
@@ -116,19 +133,48 @@ static volatile int  gWorkersQuit;
    just composed there. */
 enum { POOL_COMPOSE, POOL_CLEAR };
 static volatile int  gPoolMode;
-static int           gClearBands, gClearBandRows;
+
+/* The clear phase only blackens what no tile will paint this frame: the strip
+   right of the tile grid, the tail of the last tile row, everything below it,
+   and any slot whose tile has no bitmap yet. Clearing the whole window and then
+   overwriting most of it was O(window) of pure memset per frame -- a third of
+   the compose cost on a maximized 4K+ window. Rects are split into <=64-row
+   bands as they are added so the pool parallelizes tall ones. */
+typedef struct { int x0, y0, x1, y1; } ClearRect;
+static ClearRect *gClears;
+static int        gClearCap, gClearCount;
+#define CLEAR_BAND_ROWS 64
+
+static void clear_add(int x0, int y0, int x1, int y1)
+{
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > gComposeW) x1 = gComposeW;
+    if (y1 > gComposeH) y1 = gComposeH;
+    if (x0 >= x1 || y0 >= y1) return;
+    for (int y = y0; y < y1; y += CLEAR_BAND_ROWS) {
+        if (gClearCount == gClearCap) {
+            int ncap = gClearCap ? gClearCap * 2 : 64;
+            ClearRect *n = (ClearRect *)realloc(gClears, (size_t)ncap * sizeof(ClearRect));
+            if (!n) return;                   /* worst case: stale pixels, not a crash */
+            gClears = n; gClearCap = ncap;
+        }
+        ClearRect *c = &gClears[gClearCount++];
+        c->x0 = x0; c->x1 = x1; c->y0 = y;
+        c->y1 = (y + CLEAR_BAND_ROWS < y1) ? y + CLEAR_BAND_ROWS : y1;
+    }
+}
 
 static void pool_work(void)   /* drain the current phase's queue (work-stealing) */
 {
     int i;
     if (gPoolMode == POOL_CLEAR) {
-        while ((i = SDL_AtomicAdd(&gJobNext, 1)) < gClearBands) {
-            int y0 = i * gClearBandRows;
-            int y1 = y0 + gClearBandRows;
-            if (y1 > gComposeH) y1 = gComposeH;
-            /* cast: common.h maps memset to __stosb(unsigned char *) on x64 MSVC */
-            memset((BYTE *)(gCompose + (size_t)y0 * gComposeW), 0,
-                   (size_t)(y1 - y0) * gComposeW * sizeof(Uint32));
+        while ((i = SDL_AtomicAdd(&gJobNext, 1)) < gClearCount) {
+            const ClearRect *c = &gClears[i];
+            size_t nb = (size_t)(c->x1 - c->x0) * sizeof(Uint32);
+            for (int y = c->y0; y < c->y1; y++)
+                /* cast: common.h maps memset to __stosb(unsigned char *) on x64 MSVC */
+                memset((BYTE *)(gCompose + (size_t)y * gComposeW + c->x0), 0, nb);
         }
     } else {
         while ((i = SDL_AtomicAdd(&gJobNext, 1)) < gJobCount)
@@ -173,6 +219,7 @@ static void compose_pool_quit(void)
     if (gGoSem)   { SDL_DestroySemaphore(gGoSem);   gGoSem = NULL; }
     if (gDoneSem) { SDL_DestroySemaphore(gDoneSem); gDoneSem = NULL; }
     free(gJobs); gJobs = NULL; gJobCap = 0;
+    free(gClears); gClears = NULL; gClearCap = 0;
 }
 
 /* Convert all queued tiles into the compose buffer, in parallel when it pays. */
@@ -185,17 +232,15 @@ static void pool_phase(void)   /* run the current phase across the pool + this t
     for (int i = 0; i < gNumWorkers; i++) SDL_SemWait(gDoneSem);
 }
 
-/* Clear the compose buffer then convert all queued tiles into it -- both phases
-   parallel. The full-screen clear is O(window) and was the remaining serial cost
-   once the conversion was parallelized. Per-phase ms saved for XF_RENDER_PROF. */
+/* Clear the uncovered parts of the compose buffer (gClears) then convert all
+   queued tiles into it -- both phases parallel. Per-phase ms saved for
+   XF_RENDER_PROF. */
 static double gClearMs, gComposeMs;
 static void compose_run(void)
 {
     Uint64 t0 = SDL_GetPerformanceCounter();
 
     gPoolMode = POOL_CLEAR;
-    gClearBandRows = 64;
-    gClearBands = (gComposeH + gClearBandRows - 1) / gClearBandRows;
     pool_phase();
 
     Uint64 t1 = SDL_GetPerformanceCounter();
@@ -306,6 +351,8 @@ void RenderBitmap_SDL(void)
 
     static Uint32 argbBuf[X8 * Y8];
 
+    pal_lut_build();
+
     /* clear to black explicitly — the menu code leaves the draw color set to
        its bar/highlight color, which would otherwise tint the whole window */
     SDL_SetRenderDrawColor(gSDLRen, 0, 0, 0, 255);
@@ -335,17 +382,37 @@ void RenderBitmap_SDL(void)
                 if (nj) { gJobs = nj; gJobCap = cThreads; }
             }
             gJobCount = 0;
+            gClearCount = 0;
+
+            /* Coverage bookkeeping for the clear phase. Slots are packed
+               consecutively from firstSpot (which is always column 0), so the
+               painted area is: full rows from the first tile down to the last
+               row, which is painted up to and including lastCol. Everything
+               else -- the strip right of the grid, the tail of the last row,
+               the area below it, and slots whose tile has no bitmap -- is what
+               must be cleared to black. */
+            int gridRight = (sTilesPerRow > 0) ? sTilesPerRow * gTexW : 0;
+            if (gridRight > gComposeW) gridRight = gComposeW;
+            BOOL any = FALSE;
+            int firstDy = 0, lastDy = 0, lastCol = 0;
 
             for (int t = 0; t < cThreads; t++) {
                 if (t >= vvmhw.numTiles) break;
                 BYTE *src = (BYTE *)vvmhw.pbmTile[t].pvBits;
-                if (!src) continue;
 
                 int slot = firstSpot + t;
                 int col  = (sTilesPerRow > 0) ? slot % sTilesPerRow : 0;
                 int row  = (sTilesPerRow > 0) ? slot / sTilesPerRow : t;
                 int dx   = col * gTexW;
                 int dy   = v.sWheelOffset + row * gTexH;   /* client coords, 0 = below menu */
+
+                if (!any) { any = TRUE; firstDy = dy; }
+                lastDy = dy; lastCol = col;
+
+                if (!src) {                      /* no bitmap yet: black hole in the grid */
+                    clear_add(dx, dy, dx + gTexW, dy + gTexH);
+                    continue;
+                }
 
                 if (gJobCount < gJobCap) {
                     gJobs[gJobCount].src = src;
@@ -357,6 +424,15 @@ void RenderBitmap_SDL(void)
                 }
 
                 if (sVM >= 0 && ThreadStuff[t].iThreadVM == sVM) { focusX = dx; focusY = dy; }
+            }
+
+            if (!any) {
+                clear_add(0, 0, gComposeW, gComposeH);
+            } else {
+                clear_add(gridRight, 0, gComposeW, gComposeH);                       /* right of the grid */
+                clear_add(0, 0, gridRight, firstDy);                                  /* above the first row */
+                clear_add((lastCol + 1) * gTexW, lastDy, gridRight, lastDy + gTexH); /* tail of the last row */
+                clear_add(0, lastDy + gTexH, gridRight, gComposeH);                   /* below the last row */
             }
 
             compose_run();                       /* parallel clear + palette->ARGB convert */
@@ -395,15 +471,10 @@ void RenderBitmap_SDL(void)
 
         if (src == NULL) goto done;
 
-        for (int i = 0; i < gTexW * gTexH; i++) {
-            BYTE p = ((BYTE *)src)[i];
-            BYTE r = rgbRainbow[p * 3    ];
-            BYTE g = rgbRainbow[p * 3 + 1];
-            BYTE b = rgbRainbow[p * 3 + 2];
-            argbBuf[i] = (Uint32)0xFF000000
-                | (Uint32)((r << 2) | (r >> 4)) << 16
-                | (Uint32)((g << 2) | (g >> 4)) <<  8
-                | (Uint32)((b << 2) | (b >> 4));
+        {
+            const BYTE *s = (const BYTE *)src;
+            for (int i = 0; i < gTexW * gTexH; i++)
+                argbBuf[i] = gPalLUT[s[i]];
         }
         SDL_UpdateTexture(gSDLTex, NULL, argbBuf, gTexW * 4);
 
