@@ -1,0 +1,33 @@
+// Version resource for the Windows build. Configured by CMake from
+// XFORMER_VERSION (see the WIN32 block in the top-level CMakeLists.txt);
+// edit version.rc.in, not the generated version.rc.
+#include <windows.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    @XFORMER_VERSION_RC@
+ PRODUCTVERSION @XFORMER_VERSION_RC@
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+ FILEFLAGS      0x0L
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "Emulators, Inc."
+            VALUE "FileDescription",  "Xformer 10 Atari 8-bit emulator"
+            VALUE "FileVersion",      "@XFORMER_VERSION@"
+            VALUE "InternalName",     "xformer10"
+            VALUE "LegalCopyright",   "Copyright (C) 1986-2021 Darek Mihocka and Danny Miller"
+            VALUE "OriginalFilename", "xformer10.exe"
+            VALUE "ProductName",      "Xformer 10"
+            VALUE "ProductVersion",   "@XFORMER_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -58,6 +58,18 @@ cmake -B build-macos -S . -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build b
 - HiDPI: the window is created with `SDL_WINDOW_ALLOW_HIGHDPI`; all layout stays in window units (points) and `ddlib_sdl.c` sets the render scale to the backing ratio each frame, so an integer zoom lands on device pixels (crisp on Retina). The SDL UI backend rasterizes its text at that ratio too.
 - Icon: `src/res/xformer.icns` is generated from `gemul8r.ico` (nearest-neighbor upscale); `src/res/Info.plist.in` is the bundle plist template.
 
+### Windows
+
+```powershell
+cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -T ClangCL
+cmake --build build --config RelWithDebInfo --target xformer10
+# binary: build/RelWithDebInfo/xformer10.exe
+```
+
+- Resources: `src/res/gemul8r.rc` (icon `IDI_APP`, embedded `gemul8r.exe.manifest`) plus a `VERSIONINFO` block configured from `XFORMER_VERSION` via `src/res/version.rc.in`. The `.rc`'s menu and accelerator tables belong to the retired Win32 `WinMain` and are unused; `ui_win32.c` builds the menu at runtime.
+- The linker runs with `/MANIFEST:NO` because the `.rc` embeds the manifest itself (same as upstream's `atari.vcxproj`). Add manifest entries to `gemul8r.exe.manifest`, not to CMake.
+- SDL uses the exe's first icon group for the window class, so the title-bar/taskbar icon needs no code.
+
 ---
 
 ## Canonical source list

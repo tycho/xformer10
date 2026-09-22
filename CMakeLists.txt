@@ -207,6 +207,37 @@ if(WIN32)
         ole32
         comdlg32
     )
+
+    #
+    # Windows resources: the application icon (IDI_APP) and the embedded
+    # manifest, plus a VERSIONINFO block generated from XFORMER_VERSION. The
+    # menu and accelerator tables in gemul8r.rc belong to the retired Win32
+    # WinMain and are unused; ui_win32.c builds the menu at runtime.
+    #
+    enable_language(RC)
+
+    # "10.10.2021" -> "10,10,2021,0" for FILEVERSION/PRODUCTVERSION.
+    string(REPLACE "." ";" _xf_ver_parts "${XFORMER_VERSION}")
+    list(LENGTH _xf_ver_parts _xf_ver_len)
+    while(_xf_ver_len LESS 4)
+        list(APPEND _xf_ver_parts 0)
+        math(EXPR _xf_ver_len "${_xf_ver_len} + 1")
+    endwhile()
+    list(JOIN _xf_ver_parts "," XFORMER_VERSION_RC)
+    configure_file(src/res/version.rc.in
+                   "${CMAKE_CURRENT_BINARY_DIR}/version.rc" @ONLY)
+
+    target_sources(xformer10 PRIVATE
+        src/res/gemul8r.rc
+        "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
+    )
+
+    # gemul8r.rc embeds gemul8r.exe.manifest itself (upstream's .vcxproj
+    # sets GenerateManifest=false for the same reason); a linker-generated
+    # manifest alongside it would be a duplicate RT_MANIFEST resource.
+    if(MSVC)
+        target_link_options(xformer10 PRIVATE /MANIFEST:NO)
+    endif()
 elseif(APPLE)
     target_compile_definitions(xformer10 PRIVATE
         LINUX_PORT
