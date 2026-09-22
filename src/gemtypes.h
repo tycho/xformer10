@@ -117,12 +117,25 @@ static __inline BOOL XFSDLSetWindowText(HWND hwnd, const char *s)
 
 typedef unsigned long int  ADDR;
 
-typedef BOOL(__cdecl *PFNB)(void *, ...);
+// Every entry point is prototyped. These used to be variadic, (void *, ...),
+// which routes everything after the first argument through the variadic
+// calling convention. On Apple arm64 that convention is the stack, while the
+// (non-variadic) callees read their parameters from registers, so
+// pfnWriteProtectDisk saw a stale register as the drive number and indexed
+// off the end of the VM. Windows x64 and Linux arm64 pass variadic arguments
+// in registers too, which is why it only surfaced on macOS.
+typedef BOOL(__cdecl *PFNB)(void *);                            // (candy)
+typedef BOOL(__cdecl *PFNBI)(void *, int);                      // (candy, drive)
+typedef BOOL(__cdecl *PFNBIBB)(void *, int, BOOL, BOOL);        // (candy, drive, fSet, fWP)
+typedef BOOL(__cdecl *PFNBBB)(void *, BOOL, BOOL);              // (candy, fStep, fCont)
+typedef BOOL(__cdecl *PFNBLOAD)(void *, void *, int);           // (pPersist, candy, cbPersist)
 typedef BOOL(__cdecl *PFNBPPV)(void **, int *, void *, void *, int);
 typedef BOOL(__cdecl *PFNBW)(void *, void *, int, WPARAM, LPARAM);
-typedef ULONG(__cdecl *PFNUL)(void *, ...);
-typedef BYTE *(__cdecl *PFNPB)(void *, ...);
-typedef HRESULT (__cdecl *PFNH)(void *, ...);
+typedef HRESULT(__cdecl *PFNH)(void *, ULONG, void *);           // (candy, ea, pv)
+typedef BOOL(__cdecl *PFNBHW)(void *, ULONG, void *);           // (candy, ea, pv)
+typedef ULONG(__cdecl *PFNULLOCK)(void *, ULONG, ULONG, void **); // (candy, ea, cb, ppv)
+typedef ULONG(__cdecl *PFNULUNLOCK)(void *, ULONG, ULONG);      // (candy, ea, cb)
+typedef BYTE *(__cdecl *PFNPB)(void *, ULONG);                  // (candy, ea)
 
 typedef LONG(__cdecl *PFNL)(int, ...);
 //typedef void *(__fastcall *PHNDLR)(void *, long);
@@ -300,14 +313,14 @@ typedef struct _vminfo
     PFNB pfnInit;           // VM initialization (load any cartridge data, etc.)
     PFNB pfnUnInit;         // VM uninit
     PFNB pfnInitDisks;      // VM disk initialization
-    PFNB pfnWriteProtectDisk;// VM disk write protected?
-    PFNB pfnMountDisk;      // VM disk initialization
+    PFNBIBB pfnWriteProtectDisk; // VM disk write protected?
+    PFNBI pfnMountDisk;     // VM disk initialization
     PFNB pfnUnInitDisks;    // VM disk uninitialization
-    PFNB pfnUnmountDisk;    // VM disk uninitialization
+    PFNBI pfnUnmountDisk;   // VM disk uninitialization
     PFNB pfnColdboot;       // VM resets hardware (coldboot)
     PFNB pfnWarmboot;       // VM resets hardware (warmboot)
-    PFNB pfnExec;           // VM execute code
-    PFNB pfnTrace;          // Execute one single instruction in the VM
+    PFNBBB pfnExec;         // VM execute code
+    PFNBBB pfnTrace;        // Execute one single instruction in the VM
     PFNBW pfnWinMsg;        // handles Windows messages
     PFNB pfnDumpRegs;       // Display the VM's CPU registers as ASCII
     PFNB pfnDumpHW;         // dumps hardware state
@@ -319,18 +332,18 @@ typedef struct _vminfo
     PFNH pfnReadHWByte;      // reads a byte from the VM
     PFNH pfnReadHWWord;      // reads a word from the VM
     PFNH pfnReadHWLong;      // reads a long from the VM
-    PFNB pfnWriteHWByte;     // writes a byte to the VM
-    PFNB pfnWriteHWWord;     // writes a word to the VM
-    PFNB pfnWriteHWLong;     // writes a long to the VM
-    PFNUL pfnLockBlock;      // lock and returns pointer to memory block in VM
-    PFNUL pfnUnlockBlock;    // release memory block in VM
+    PFNBHW pfnWriteHWByte;   // writes a byte to the VM
+    PFNBHW pfnWriteHWWord;   // writes a word to the VM
+    PFNBHW pfnWriteHWLong;   // writes a long to the VM
+    PFNULLOCK pfnLockBlock;  // lock and returns pointer to memory block in VM
+    PFNULUNLOCK pfnUnlockBlock; // release memory block in VM
     PFNPB pfnMapAddress;     // convert virtual machine address to flat address
     PFNPB pfnMapAddressRW;   // convert virtual machine address to flat address
 
     // back to being necessary
     
     PFNB pfnSaveState;      // save snapshot to disk
-    PFNB pfnLoadState;      // load snapshot from disk and resume
+    PFNBLOAD pfnLoadState;  // load snapshot from disk and resume
 } VMINFO, *PVMINFO;
 
 // and here are the structures used by each VM type
