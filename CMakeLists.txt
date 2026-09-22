@@ -26,6 +26,12 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
 	)
 endif()
 
+if(WIN32 AND MSVC)
+	add_link_options(
+		/SUBSYSTEM:WINDOWS
+	)
+endif()
+
 #
 # Use LTO for non-Debug builds
 #
