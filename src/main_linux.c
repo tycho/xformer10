@@ -113,8 +113,46 @@ static void joy_update_dir(int new_dir)
     gJoyDir = new_dir;
 }
 
+/* Scroll the tiled overview by px window points (positive = toward the top).
+   The sub-pixel remainder is carried over so a slow trackpad drag isn't
+   truncated away. ScrollTiles() clamps the offset and re-inits threads only
+   when the visible row set changes. */
+static void tile_scroll(float px)
+{
+    static float acc;
+    if (!(v.fTiling && v.cVM > 0 && sTilesPerRow > 0 && (int)sTileSize.y > 0))
+        return;
+    acc += px;
+    int whole = (int)acc;
+    acc -= (float)whole;
+    if (whole) {
+        v.sWheelOffset += whole;
+        ScrollTiles();
+    }
+}
+
+/* ~8px per wheel notch, 64 with "Mouse Wheel Sensitivity High" */
+static float notch_px(void)
+{
+    return v.fWheelSensitive ? 64.f : 8.f;
+}
+
+#ifdef __APPLE__
+/* AppKit scroll events (see platform_macos.h): a trackpad's deltas are in
+   window points and, with momentum enabled, keep coming with decaying values
+   after the fingers lift, so they scroll 1:1 (3x on High). */
+static void tile_scroll_mac(float dy, int precise)
+{
+    tile_scroll(precise ? dy * (v.fWheelSensitive ? 3.f : 1.f)
+                        : dy * notch_px());
+}
+#endif
+
 int main(int argc, char **argv)
 {
+#ifdef __APPLE__
+    MacOSPlatformPreInit();
+#endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
@@ -125,7 +163,7 @@ int main(int argc, char **argv)
        switching apps only focused the window and had to be repeated. */
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 #ifdef __APPLE__
-    MacOSPlatformInit();
+    MacOSPlatformInit(tile_scroll_mac);
 #endif
 
     if (SDL_NumJoysticks() > 0) {
@@ -377,33 +415,11 @@ int main(int argc, char **argv)
                     v.iVM = hit;
                     LinuxDoCommand(IDM_TILE);
                 }
-            } else if (e.type == SDL_MOUSEWHEEL && v.fTiling && v.cVM > 0
-                       && sTilesPerRow > 0 && (int)sTileSize.y > 0) {
-                /* smooth pixel scrolling: ~8px per wheel notch, 64 with "Mouse
-                   Wheel Sensitivity High". On macOS a trackpad reports pixel-
-                   precise deltas in window points (read back from AppKit, since
-                   SDL rescales them to line units), and with momentum enabled
-                   (MacOSPlatformInit) keeps sending decaying ones after the
-                   fingers lift, so those scroll 1:1 (3x on High). The sub-pixel
-                   remainder is carried over so a slow drag isn't truncated away.
-                   ScrollTiles() clamps the offset and re-inits threads only when
-                   the visible row set changes */
-                static float acc;
-                float px = e.wheel.preciseY * (v.fWheelSensitive ? 64.f : 8.f);
-#ifdef __APPLE__
-                {
-                    int precise; float dy;
-                    if (MacOSPopScroll(&precise, &dy) && precise)
-                        px = dy * (v.fWheelSensitive ? 3.f : 1.f);
-                }
+#ifndef __APPLE__
+            } else if (e.type == SDL_MOUSEWHEEL) {
+                /* on macOS the tiles scroll from the AppKit events instead */
+                tile_scroll(e.wheel.preciseY * notch_px());
 #endif
-                acc += px;
-                int whole = (int)acc;
-                acc -= (float)whole;
-                if (whole) {
-                    v.sWheelOffset += whole;
-                    ScrollTiles();
-                }
             } else if (e.type == SDL_DROPFILE) {
                 char *path = e.drop.file;
                 if (path) {

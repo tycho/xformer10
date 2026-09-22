@@ -12,16 +12,20 @@
 
 #ifdef __APPLE__
 
-/* Call once after SDL_Init(). Re-enables trackpad momentum scrolling, which
-   SDL turns off for the process, and starts recording scroll events so
-   MacOSPopScroll() can report them as AppKit delivered them. */
-void MacOSPlatformInit(void);
+/* Call before SDL_Init(): enables trackpad momentum scrolling for the
+   process, which SDL's own startup turns off. */
+void MacOSPlatformPreInit(void);
 
-/* Dequeue the AppKit scroll event behind the SDL_MOUSEWHEEL being handled
-   (one per wheel event, in order). Returns 0 if none is recorded. precise
-   is 1 for a trackpad or Magic Mouse, whose dy is in window points (momentum
-   events included), 0 for a notched wheel, whose dy is in notches. */
-int  MacOSPopScroll(int *precise, float *dy);
+/* Scroll handler: dy is in window points for a trackpad or Magic Mouse
+   (precise = 1; momentum-phase events included), or in wheel notches for a
+   notched mouse wheel (precise = 0). Same sign convention as SDL's wheel.y. */
+typedef void (*MacOSScrollFn)(float dy, int precise);
+
+/* Call after SDL_Init(): route the application's scroll events to fn as
+   AppKit delivers them. SDL_MOUSEWHEEL must then be ignored on macOS: SDL
+   forwards a trackpad's deltas rescaled to line units and drops the
+   zero-delta gesture-phase events, so it can't be matched up reliably. */
+void MacOSPlatformInit(MacOSScrollFn fn);
 
 #endif /* __APPLE__ */
 #endif /* PLATFORM_MACOS_H */

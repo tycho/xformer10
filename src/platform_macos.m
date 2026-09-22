@@ -11,48 +11,54 @@
 #import <Cocoa/Cocoa.h>
 #include "platform_macos.h"
 
-/* Scroll deltas as AppKit reported them, in the order SDL will translate the
-   same events. SDL exposes only deltaY, which for a trackpad is scrollingDeltaY
-   rescaled to line units (about a tenth), so the pixel value is kept here.
-   Everything runs on the main thread: no locking. */
-#define SCROLL_RING 64
-static struct { float dy; int precise; } sScroll[SCROLL_RING];
-static unsigned sScrollHead, sScrollTail;
+static MacOSScrollFn sScrollFn;
 
-void MacOSPlatformInit(void)
+void MacOSPlatformPreInit(void)
 {
     @autoreleasepool {
         /* SDL_Init registers AppleMomentumScrollSupported = NO, which makes
-           AppKit stop the scroll dead when the fingers leave the trackpad.
-           A later registration for the same key wins, so put it back: AppKit
-           then keeps delivering scroll events with decaying deltas during the
-           momentum phase, which SDL passes through as ordinary wheel events. */
+           AppKit stop a scroll dead when the fingers leave the trackpad.
+           The argument domain outranks the registration domain and is not
+           persisted, so YES there wins whenever AppKit reads the key. AppKit
+           then keeps delivering scroll events with decaying deltas during
+           the momentum phase. */
+        NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+        NSMutableDictionary *args = [[ud volatileDomainForName:NSArgumentDomain] mutableCopy];
+        if (!args)
+            args = [NSMutableDictionary new];
+        args[@"AppleMomentumScrollSupported"] = @YES;
+        [ud setVolatileDomain:args forName:NSArgumentDomain];
+    }
+}
+
+void MacOSPlatformInit(MacOSScrollFn fn)
+{
+    sScrollFn = fn;
+
+    @autoreleasepool {
         [[NSUserDefaults standardUserDefaults] registerDefaults:@{
             @"AppleMomentumScrollSupported": @YES
         }];
 
-        /* Monitors run when an event is dequeued, before SDL translates it,
-           so the queue here fills in the same order as SDL's wheel events. */
+        /* Local monitors run on the main thread as each event is dequeued,
+           i.e. from inside SDL's event pump between frames, so the handler
+           may touch emulator state. Nothing is delivered while a modal
+           panel (file dialog) owns the run loop. */
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
                                               handler:^NSEvent *(NSEvent *ev) {
-            if (sScrollHead - sScrollTail < SCROLL_RING) {
-                sScroll[sScrollHead % SCROLL_RING].dy      = (float)ev.scrollingDeltaY;
-                sScroll[sScrollHead % SCROLL_RING].precise = ev.hasPreciseScrollingDeltas ? 1 : 0;
-                sScrollHead++;
+            if (sScrollFn && ev.window && [NSApp modalWindow] == nil) {
+                if (ev.hasPreciseScrollingDeltas) {
+                    if (ev.scrollingDeltaY != 0.0)
+                        sScrollFn((float)ev.scrollingDeltaY, 1);
+                } else if (ev.deltaY != 0.0) {
+                    /* whole notches, as SDL reports them for a discrete wheel */
+                    float d = (float)ev.deltaY;
+                    sScrollFn(d > 0 ? ceilf(d) : floorf(d), 0);
+                }
             }
             return ev;
         }];
     }
-}
-
-int MacOSPopScroll(int *precise, float *dy)
-{
-    if (sScrollTail == sScrollHead)
-        return 0;
-    *dy      = sScroll[sScrollTail % SCROLL_RING].dy;
-    *precise = sScroll[sScrollTail % SCROLL_RING].precise;
-    sScrollTail++;
-    return 1;
 }
 
 #endif /* SDL2_ENABLED && __APPLE__ */
