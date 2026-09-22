@@ -6,6 +6,7 @@
 
 SDL_Renderer *GetSDLRenderer(void);   /* defined in ddlib_sdl.c */
 SDL_Window   *GetSDLWindow(void);     /* defined in ddlib_sdl.c */
+float         GetSDLBackingScale(void); /* defined in ddlib_sdl.c */
 
 /* exts: comma-separated extensions to show (e.g. ".atr,.atx,.xfd"),
          or "" / NULL for all files.

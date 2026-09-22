@@ -57,6 +57,7 @@ typedef struct {
 } ItemTex;
 
 static TTF_Font    *gFont         = NULL;
+static float        gBacking      = 1.0f;   /* device pixels per window unit */
 static SDL_Texture *gTopTex[UI_NUM_MENUS];
 static int          gTopW[UI_NUM_MENUS];
 static int          gTopH[UI_NUM_MENUS];
@@ -185,17 +186,21 @@ static void CloseMenus(void)
     gSubmenuOpen = -1; gSubmenuHover = -1;
 }
 
+/* Rasterize text at device resolution (the font is opened at gBacking times
+   the point size); w/h come back in window units so the caller lays out in
+   points and the render scale maps the texture 1:1 onto device pixels. */
 static SDL_Texture *RenderText(SDL_Renderer *ren, const char *text,
                                SDL_Color color, int *w, int *h)
 {
     SDL_Surface *surf = TTF_RenderUTF8_Blended(gFont, text, color);
     if (!surf) { *w = *h = 0; return NULL; }
     SDL_Texture *tex = SDL_CreateTextureFromSurface(ren, surf);
-    *w = surf->w;
-    *h = surf->h;
+    *w = (int)(surf->w / gBacking + 0.5f);
+    *h = (int)(surf->h / gBacking + 0.5f);
     SDL_FreeSurface(surf);
     return tex;
 }
+
 /* Rasterize an item's label/shortcut; returns the row width it needs. */
 static int PrepareItem(SDL_Renderer *ren, const UIMenuItem *it, ItemTex *t)
 {
@@ -257,7 +262,8 @@ void UIMenuInit(SDL_Window *win, SDL_Renderer *ren)
         TTF_Quit();
         return;
     }
-    gFont = TTF_OpenFont(fontPath, FONT_SIZE);
+    gBacking = GetSDLBackingScale();
+    gFont = TTF_OpenFont(fontPath, (int)(FONT_SIZE * gBacking + 0.5f));
     if (!gFont) {
         fprintf(stderr, "UIMenuInit: TTF_OpenFont(%s) failed: %s\n",
                 fontPath, TTF_GetError());
@@ -394,7 +400,7 @@ void UIMenuRender(SDL_Renderer *ren)
     if (!gMenuReady) return;
 
     int winW, winH;
-    SDL_GetRendererOutputSize(ren, &winW, &winH);
+    SDL_GetWindowSize(GetSDLWindow(), &winW, &winH);   /* window units */
     (void)winH;
 
     /* bar background */

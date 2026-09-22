@@ -267,6 +267,34 @@ void linux_get_client_rect(RECT *r)
     r->right = w; r->bottom = (h > MENU_H) ? h - MENU_H : 0;
 }
 
+/* HiDPI. The window is created with SDL_WINDOW_ALLOW_HIGHDPI, so on Retina
+   (macOS) and scaled Wayland outputs the renderer's output size is larger than
+   the window size, by the backing scale. All layout in this file and the UI
+   backends is done in window units (points): mouse events, GetClientRect and
+   the tile grid all use them. Setting the render scale to the backing ratio
+   keeps that arithmetic intact while the GPU samples the Atari frame straight
+   to device pixels, so an integer zoom stays pixel-crisp instead of being
+   upscaled by the compositor. Re-applied every frame because the ratio changes
+   when the window moves between displays. */
+float GetSDLBackingScale(void)
+{
+    int winW = 0, outW = 0, outH = 0;
+    if (!gSDLWin || !gSDLRen) return 1.0f;
+    SDL_GetWindowSize(gSDLWin, &winW, NULL);
+    SDL_GetRendererOutputSize(gSDLRen, &outW, &outH);
+    if (winW <= 0 || outW <= 0) return 1.0f;
+    return (float)outW / (float)winW;
+}
+
+static void ApplyBackingScale(void)
+{
+    float s = GetSDLBackingScale();
+    float cx, cy;
+    SDL_RenderGetScale(gSDLRen, &cx, &cy);
+    if (cx != s || cy != s)
+        SDL_RenderSetScale(gSDLRen, s, s);
+}
+
 BOOL InitDrawing(int dx, int dy, int bpp, HANDLE hwndApp, BOOL fReInit)
 {
     (void)bpp; (void)hwndApp; (void)fReInit;
@@ -293,10 +321,12 @@ BOOL InitDrawing(int dx, int dy, int bpp, HANDLE hwndApp, BOOL fReInit)
     gSDLWin = SDL_CreateWindow("Xformer 10",
                                SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                dx * gWinZoom, dy * gWinZoom + MENU_H,
-                               SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+                               SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE |
+                               SDL_WINDOW_ALLOW_HIGHDPI);
     if (!gSDLWin) return FALSE;
     gSDLRen = SDL_CreateRenderer(gSDLWin, -1, SDL_RENDERER_PRESENTVSYNC);
     if (!gSDLRen) return FALSE;
+    ApplyBackingScale();
     gSDLTex = SDL_CreateTexture(gSDLRen,
                                 SDL_PIXELFORMAT_ARGB8888,
                                 SDL_TEXTUREACCESS_STREAMING,
@@ -353,6 +383,7 @@ void RenderBitmap_SDL(void)
     static Uint32 argbBuf[X8 * Y8];
 
     pal_lut_build();
+    ApplyBackingScale();
 
     /* clear to black explicitly — the menu code leaves the draw color set to
        its bar/highlight color, which would otherwise tint the whole window */

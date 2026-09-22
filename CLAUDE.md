@@ -55,6 +55,7 @@ cmake -B build-macos -S . -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build b
 - `-DXFORMER_MACOS_BUNDLE=OFF` builds a bare `xformer10` executable instead. The bundle is ad-hoc signed; set `XFORMER_CODESIGN_IDENTITY` to sign for distribution.
 - Menus and file dialogs are native (Cocoa) by default; `-DXFORMER_UI=sdl` uses the in-window SDL menu bar and file browser instead (same default as Linux; Windows likewise defaults to native Win32). Only the SDL backend needs SDL_ttf and a UI font (CoreText in `src/font_sdl.c`).
 - Config lives in `~/Library/Application Support/xformer`.
+- HiDPI: the window is created with `SDL_WINDOW_ALLOW_HIGHDPI`; all layout stays in window units (points) and `ddlib_sdl.c` sets the render scale to the backing ratio each frame, so an integer zoom lands on device pixels (crisp on Retina). The SDL UI backend rasterizes its text at that ratio too.
 - Icon: `src/res/xformer.icns` is generated from `gemul8r.ico` (nearest-neighbor upscale); `src/res/Info.plist.in` is the bundle plist template.
 
 ---

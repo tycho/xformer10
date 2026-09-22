@@ -94,6 +94,7 @@ static int s_fbPathH  = 28;
 static int s_fbItemH  = 22;
 static int s_fbPad    = 8;
 static int s_fbInputH = 30;
+static float s_fbBacking = 1.0f;   /* device pixels per window unit */
 
 #define FB_FONT_SIZE  s_fbFont
 #define FB_OVL_W      s_fbOvlW
@@ -228,6 +229,21 @@ static int fb_load_dir_ex(const char *path, FbEntry *entries, int max,
     return n;
 }
 
+/* Rasterize text at device resolution (the font is opened at s_fbBacking
+   times the point size); w/h come back in window units so layout stays in
+   points and the render scale maps the texture 1:1 onto device pixels. */
+static SDL_Texture *fb_text(SDL_Renderer *ren, TTF_Font *font, const char *text,
+                            SDL_Color color, int *w, int *h)
+{
+    SDL_Surface *surf = TTF_RenderUTF8_Blended(font, text, color);
+    if (!surf) { *w = *h = 0; return NULL; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(ren, surf);
+    *w = (int)(surf->w / s_fbBacking + 0.5f);
+    *h = (int)(surf->h / s_fbBacking + 0.5f);
+    SDL_FreeSurface(surf);
+    return tex;
+}
+
 static void fb_render(SDL_Renderer *ren, SDL_Window *win, TTF_Font *font,
                       const char *cwd, FbEntry *entries, int nEntries,
                       int selected, int scroll, int mode, const char *inputbuf)
@@ -260,11 +276,9 @@ static void fb_render(SDL_Renderer *ren, SDL_Window *win, TTF_Font *font,
 
     /* path text */
     SDL_Color white = {230, 230, 230, 255};
-    SDL_Surface *ps = TTF_RenderUTF8_Blended(font, cwd, white);
-    if (ps) {
-        SDL_Texture *pt = SDL_CreateTextureFromSurface(ren, ps);
-        int tw = ps->w, th = ps->h;
-        SDL_FreeSurface(ps);
+    int tw, th;
+    SDL_Texture *pt = fb_text(ren, font, cwd, white, &tw, &th);
+    if (pt) {
         int tx = ox + FB_OVL_W - tw - FB_PAD;
         if (tx < ox + FB_PAD) tx = ox + FB_PAD;
         SDL_Rect dst = {tx, oy + (FB_PATH_H - th) / 2, tw, th};
@@ -306,14 +320,10 @@ static void fb_render(SDL_Renderer *ren, SDL_Window *win, TTF_Font *font,
         else
             snprintf(label, sizeof(label), "%s",  entries[i].name);
 
-        SDL_Surface *ls = TTF_RenderUTF8_Blended(font, label, fc);
-        if (ls) {
-            SDL_Texture *lt = SDL_CreateTextureFromSurface(ren, ls);
-            int th = ls->h;
-            SDL_FreeSurface(ls);
-            SDL_Rect dst = {ox + FB_PAD, rowY + (FB_ITEM_H - th) / 2, 0, th};
-            int tw2; SDL_QueryTexture(lt, NULL, NULL, &tw2, NULL);
-            dst.w = tw2;
+        int lw, lh;
+        SDL_Texture *lt = fb_text(ren, font, label, fc, &lw, &lh);
+        if (lt) {
+            SDL_Rect dst = {ox + FB_PAD, rowY + (FB_ITEM_H - lh) / 2, lw, lh};
             SDL_RenderCopy(ren, lt, NULL, &dst);
             SDL_DestroyTexture(lt);
         }
@@ -333,14 +343,12 @@ static void fb_render(SDL_Renderer *ren, SDL_Window *win, TTF_Font *font,
 
         char prompt[260];
         snprintf(prompt, sizeof(prompt), "> %s_", inputbuf ? inputbuf : "");
-        SDL_Surface *is = TTF_RenderUTF8_Blended(font, prompt, white);
-        if (is) {
-            SDL_Texture *it_tex = SDL_CreateTextureFromSurface(ren, is);
-            int tw = is->w, th = is->h;
-            SDL_FreeSurface(is);
+        int iw, ih;
+        SDL_Texture *it_tex = fb_text(ren, font, prompt, white, &iw, &ih);
+        if (it_tex) {
             SDL_Rect dst = {ox + FB_PAD,
-                            oy + FB_OVL_H - FB_INPUT_H + (FB_INPUT_H - th) / 2,
-                            tw, th};
+                            oy + FB_OVL_H - FB_INPUT_H + (FB_INPUT_H - ih) / 2,
+                            iw, ih};
             SDL_RenderCopy(ren, it_tex, NULL, &dst);
             SDL_DestroyTexture(it_tex);
         }
@@ -360,8 +368,10 @@ int SDL_FileBrowserRunEx(SDL_Renderer *ren, SDL_Window *win,
     s_fbPad    = SDLUIScaled(8);
     s_fbInputH = SDLUIScaled(30);
 
+    s_fbBacking = GetSDLBackingScale();
     const char *fontPath = SDLUIFontPath();
-    TTF_Font *font = fontPath ? TTF_OpenFont(fontPath, FB_FONT_SIZE) : NULL;
+    TTF_Font *font = fontPath
+        ? TTF_OpenFont(fontPath, (int)(FB_FONT_SIZE * s_fbBacking + 0.5f)) : NULL;
     if (!font) return 0;
 
     char cwd[PATH_MAX];
