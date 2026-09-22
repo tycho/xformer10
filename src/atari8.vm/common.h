@@ -41,7 +41,7 @@
 
 #include "../gemtypes.h"
 
-#if defined(_M_IX86) || (defined(_M_AMD64) && !defined(_M_ARM64EC))
+#if defined(_MSC_VER) && !defined(__clang__) && (defined(_M_IX86) || (defined(_M_AMD64) && !defined(_M_ARM64EC)))
 
 #pragma intrinsic(__stosb)
 #pragma intrinsic(__movsb)
