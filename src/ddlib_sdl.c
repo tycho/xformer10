@@ -21,7 +21,7 @@
 #include <SDL2/SDL.h>
 #include "gemtypes.h"
 #include "atari800.h"
-#include "menu_sdl.h"
+#include "ui.h"
 #include "font_sdl.h"
 
 static SDL_Window   *gSDLWin;
@@ -271,11 +271,12 @@ BOOL InitDrawing(int dx, int dy, int bpp, HANDLE hwndApp, BOOL fReInit)
 {
     (void)bpp; (void)hwndApp; (void)fReInit;
 
-    /* HiDPI: scale the menu bar and default window zoom for the panel DPI.
-       gMenuBarH must be set before the window is created — the height below and
-       all later layout read it through the MENU_H macro. */
+    /* HiDPI: scale the default window zoom for the panel DPI. gMenuBarH (the
+       in-window bar of the SDL UI backend, 0 for native menu bars) must be set
+       before the window is created — the height below and all later layout
+       read it through the MENU_H macro. */
     float uiScale = SDLUIScale();
-    gMenuBarH = (int)(MENU_H_BASE * uiScale + 0.5f);
+    gMenuBarH = UIMenuBarHeight();
 
     int zoom = (int)(3 * uiScale + 0.5f);
     if (zoom < 1) zoom = 1;
@@ -303,7 +304,7 @@ BOOL InitDrawing(int dx, int dy, int bpp, HANDLE hwndApp, BOOL fReInit)
     if (!gSDLTex) return FALSE;
     gTexW = dx;
     gTexH = dy;
-    MenuInit(gSDLRen);
+    UIMenuInit(gSDLWin, gSDLRen);
     return TRUE;
 }
 
@@ -332,7 +333,7 @@ void UninitDrawing(BOOL fFinal)
 {
     if (fFinal)
     {
-        MenuQuit();
+        UIMenuQuit();
         for (int i = 0; i < MAX_TILE_TEX; i++) {
             if (gTileTex[i]) { SDL_DestroyTexture(gTileTex[i]); gTileTex[i] = NULL; }
         }
@@ -505,7 +506,7 @@ void RenderBitmap_SDL(void)
         SDL_RenderCopy(gSDLRen, gSDLTex, NULL, &dest);
     }
 done:
-    MenuRender(gSDLRen);
+    UIMenuRender(gSDLRen);
     SDL_RenderPresent(gSDLRen);
 }
 

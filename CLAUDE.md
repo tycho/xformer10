@@ -53,7 +53,8 @@ cmake -B build-macos -S . -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build b
 - No Homebrew runtime dependencies: SDL2, SDL2_ttf and FreeType are fetched and linked statically; the app links only system frameworks. Verify with `otool -L build-macos/Xformer10.app/Contents/MacOS/Xformer10`.
 - Minimum macOS defaults to 11.0 (`CMAKE_OSX_DEPLOYMENT_TARGET`). Universal binary: `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`.
 - `-DXFORMER_MACOS_BUNDLE=OFF` builds a bare `xformer10` executable instead. The bundle is ad-hoc signed; set `XFORMER_CODESIGN_IDENTITY` to sign for distribution.
-- UI font comes from CoreText (system UI font, then Helvetica Neue etc.) in `src/font_sdl.c`; config lives in `~/Library/Application Support/xformer`.
+- Menus and file dialogs are native (Cocoa) by default; `-DXFORMER_UI=sdl` uses the in-window SDL menu bar and file browser instead (same default as Linux; Windows likewise defaults to native Win32). Only the SDL backend needs SDL_ttf and a UI font (CoreText in `src/font_sdl.c`).
+- Config lives in `~/Library/Application Support/xformer`.
 - Icon: `src/res/xformer.icns` is generated from `gemul8r.ico` (nearest-neighbor upscale); `src/res/Info.plist.in` is the bundle plist template.
 
 ---
@@ -77,8 +78,12 @@ The live C source list is the `add_executable(xformer10 ...)` block in **`CMakeL
 |------|---------|
 | `src/main_linux.c` | Linux entry point, SDL2 event loop, 70 Hz throttle |
 | `src/ddlib_sdl.c` / `ddlib_sdl.h` | DirectDraw → SDL_Texture shim; `GetSDLRenderer()` / `GetSDLWindow()` accessors |
-| `src/menu_sdl.c` / `menu_sdl.h` | SDL2 dropdown menu bar (File/VM/Window/Disk) |
-| `src/sdl_filebrowser.c` / `sdl_filebrowser.h` | Modal SDL2 file browser (replaces zenity) |
+| `src/ui/ui.h` | Platform UI layer: menu bar + file dialogs interface |
+| `src/ui/ui_common.c` | Shared menu table, enabled/checked state, command dispatch, accelerators |
+| `src/ui/ui_sdl.c` | SDL backend: dropdown menu bar drawn with SDL_ttf (Linux default) |
+| `src/ui/sdl_filebrowser.c` / `.h` | Modal SDL2 file browser used by the SDL backend |
+| `src/ui/ui_win32.c` | Native Win32 backend: HMENU on the SDL window, GetOpenFileName, IFileOpenDialog |
+| `src/ui/ui_cocoa.m` | Native macOS backend: NSMenu in the system menu bar, NSOpenPanel/NSSavePanel |
 | `src/keymap_sdl.c` | SDL scancode → PS/2 scan code mapping |
 | `src/stubs_linux.c` | Win32 stubs that are no-ops on Linux |
 | `src/compat_win.h` | Win32 type/macro compatibility layer |

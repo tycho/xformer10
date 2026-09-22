@@ -6473,13 +6473,19 @@ Lhib:
 #ifdef SDL2_ENABLED
 #include <stdio.h>
 #include <string.h>
-#include "sdl_filebrowser.h"
+#include "ui.h"
 #include "ddlib_sdl.h"
 
-static BOOL LinuxPickFile(char *out, int sz)
+/* Pick a disk image to mount; out holds the current image (start hint). */
+static BOOL LinuxPickFile(const char *title, char *out, int sz)
 {
-    return (BOOL)SDL_FileBrowserRun(GetSDLRenderer(), GetSDLWindow(),
-                                    out, out, sz);
+    UIFileDialogArgs a = {
+        .mode = UI_FILE_OPEN, .title = title,
+        .filterName = "Atari Disk Images",
+        .exts = ".atr,.xfd,.atx,.sd,.dd,.xex,.exe,.com,.bas",
+        .start = out,
+    };
+    return (BOOL)UIFileDialog(&a, out, sz);
 }
 
 extern BOOL TimeTravel(void *candy);
@@ -6530,8 +6536,10 @@ void LinuxDoCommand(int idm)
 
     case IDM_FULLSCREEN:
         v.fFullScreen = !v.fFullScreen;
+        UIMenuFullscreenChanging(v.fFullScreen);
         SDL_SetWindowFullscreen(GetSDLWindow(),
             v.fFullScreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+        UIMenuFullscreenChanged(v.fFullScreen);
         break;
 
     case IDM_TILE:
@@ -6652,7 +6660,7 @@ void LinuxDoCommand(int idm)
             char path[MAX_PATH];
             strncpy(path, rgpvm[v.iVM]->rgvd[0].sz, MAX_PATH - 1);
             path[MAX_PATH - 1] = '\0';
-            if (LinuxPickFile(path, MAX_PATH)) {
+            if (LinuxPickFile("Mount D1:", path, MAX_PATH)) {
                 strncpy(rgpvm[v.iVM]->rgvd[0].sz, path, MAX_PATH - 1);
                 rgpvm[v.iVM]->rgvd[0].sz[MAX_PATH - 1] = '\0';
                 rgpvm[v.iVM]->rgvd[0].dt = DISK_IMAGE;
@@ -6670,7 +6678,7 @@ void LinuxDoCommand(int idm)
             char path[MAX_PATH];
             strncpy(path, rgpvm[v.iVM]->rgvd[1].sz, MAX_PATH - 1);
             path[MAX_PATH - 1] = '\0';
-            if (LinuxPickFile(path, MAX_PATH)) {
+            if (LinuxPickFile("Mount D2:", path, MAX_PATH)) {
                 strncpy(rgpvm[v.iVM]->rgvd[1].sz, path, MAX_PATH - 1);
                 rgpvm[v.iVM]->rgvd[1].sz[MAX_PATH - 1] = '\0';
                 rgpvm[v.iVM]->rgvd[1].dt = DISK_IMAGE;
@@ -6743,9 +6751,11 @@ void LinuxDoCommand(int idm)
     {
         char fold[MAX_PATH];
         fold[0] = '\0';
-        if (SDL_FileBrowserRunEx(GetSDLRenderer(), GetSDLWindow(),
-                                 v.lpCurrentDir[0] ? v.lpCurrentDir : NULL,
-                                 fold, MAX_PATH, "", 1))
+        UIFileDialogArgs a = {
+            .mode = UI_FILE_FOLDER, .title = "Open Folder",
+            .start = v.lpCurrentDir,
+        };
+        if (UIFileDialog(&a, fold, MAX_PATH))
         {
             int iVMx = -1;
             OpenFolders(fold, &iVMx);
@@ -6759,8 +6769,11 @@ void LinuxDoCommand(int idm)
     {
         char chFN[MAX_PATH];
         chFN[0] = '\0';
-        if (SDL_FileBrowserRunEx(GetSDLRenderer(), GetSDLWindow(),
-                                 NULL, chFN, MAX_PATH, ".gem", 0))
+        UIFileDialogArgs a = {
+            .mode = UI_FILE_OPEN, .title = "Load Session",
+            .filterName = "Xformer Session", .exts = ".gem",
+        };
+        if (UIFileDialog(&a, chFN, MAX_PATH))
         {
             LoadProperties(chFN, TRUE);
             LoadProperties(chFN, FALSE);
@@ -6774,11 +6787,12 @@ void LinuxDoCommand(int idm)
     {
         char chFN[MAX_PATH];
         chFN[0] = '\0';
-        if (SDL_FileBrowserRunEx(GetSDLRenderer(), GetSDLWindow(),
-                                 NULL, chFN, MAX_PATH, ".gem", 2)) {
-            size_t n = strlen(chFN);
-            if (n < 4 || strcmp(chFN + n - 4, ".gem") != 0)
-                strncat(chFN, ".gem", MAX_PATH - n - 1);
+        UIFileDialogArgs a = {
+            .mode = UI_FILE_SAVE, .title = "Save Session As",
+            .filterName = "Xformer Session", .exts = ".gem",
+        };
+        if (UIFileDialog(&a, chFN, MAX_PATH)) {
+            UIEnsureExtension(chFN, MAX_PATH, ".gem");
             SaveProperties(chFN);
         }
         break;
@@ -6788,9 +6802,12 @@ void LinuxDoCommand(int idm)
             char path[MAX_PATH];
             strncpy(path, rgpvm[v.iVM]->rgcart.szName, MAX_PATH - 1);
             path[MAX_PATH - 1] = '\0';
-            if (SDL_FileBrowserRunEx(GetSDLRenderer(), GetSDLWindow(),
-                                     path[0] ? path : NULL,
-                                     path, MAX_PATH, ".rom,.bin,.car", 0)) {
+            UIFileDialogArgs a = {
+                .mode = UI_FILE_OPEN, .title = "Insert Cartridge",
+                .filterName = "Atari Cartridge Images", .exts = ".rom,.bin,.car",
+                .start = path,
+            };
+            if (UIFileDialog(&a, path, MAX_PATH)) {
                 strncpy(rgpvm[v.iVM]->rgcart.szName, path, MAX_PATH - 1);
                 rgpvm[v.iVM]->rgcart.szName[MAX_PATH - 1] = '\0';
                 rgpvm[v.iVM]->rgcart.fCartIn = TRUE;
@@ -6834,11 +6851,12 @@ void LinuxDoCommand(int idm)
         int disk = idm - IDM_D1BLANKSD;
         char path[MAX_PATH];
         path[0] = '\0';
-        if (SDL_FileBrowserRunEx(GetSDLRenderer(), GetSDLWindow(),
-                                 NULL, path, MAX_PATH, ".atr", 2)) {
-            size_t _n = strlen(path);
-            if (_n < 4 || strcmp(path + _n - 4, ".atr") != 0)
-                strncat(path, ".atr", MAX_PATH - _n - 1);
+        UIFileDialogArgs a = {
+            .mode = UI_FILE_SAVE, .title = "Create Blank Disk",
+            .filterName = "Atari Disk Image", .exts = ".atr",
+        };
+        if (UIFileDialog(&a, path, MAX_PATH)) {
+            UIEnsureExtension(path, MAX_PATH, ".atr");
             int h = _open(path,
                           _O_BINARY | _O_CREAT | _O_WRONLY | _O_TRUNC,
                           _S_IREAD | _S_IWRITE);

@@ -613,10 +613,4 @@ int SDL_FileBrowserRunEx(SDL_Renderer *ren, SDL_Window *win,
     return 0;
 }
 
-int SDL_FileBrowserRun(SDL_Renderer *ren, SDL_Window *win,
-                       const char *start_path, char *out, int sz)
-{
-    return SDL_FileBrowserRunEx(ren, win, start_path, out, sz,
-                                ".atr,.atx,.xfd", 0);
-}
 #endif /* SDL2_ENABLED */

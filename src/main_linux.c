@@ -20,7 +20,7 @@
 #include "gemtypes.h"
 #include "atari800.h"
 #include "res/resource.h"
-#include "menu_sdl.h"
+#include "ui.h"
 
 void UninitThreads(void);
 void LinuxDoCommand(int idm);
@@ -295,7 +295,7 @@ int main(int argc, char **argv)
            whole iteration up to the throttle, to find where a stutter's time goes. */
         Uint64 _l0 = SDL_GetPerformanceCounter(), _ev1 = 0;
         while (SDL_PollEvent(&e)) {
-            if (MenuHandleEvent(&e)) continue;
+            if (UIMenuHandleEvent(&e)) continue;
             if (e.type == SDL_QUIT) {
                 vi.fQuitting = TRUE;
             } else if (e.type == SDL_WINDOWEVENT) {
@@ -449,29 +449,13 @@ int main(int argc, char **argv)
                         FWinMsgVM(v.iVM, vi.hWnd,
                                   is_down ? WM_KEYDOWN : WM_KEYUP,
                                   (WPARAM)vk, lp | (LPARAM)0x01000000);
-                    } else if (sc == SDL_SCANCODE_F5 && is_down) {
-                        LinuxDoCommand(IDM_TILE);
-                    } else if (sc == SDL_SCANCODE_F1 && (mod & KMOD_ALT) && is_down) {
-                        LinuxDoCommand(IDM_TURBO);
-                    } else if (sc == SDL_SCANCODE_F10 && is_down) {
-                        if (mod & KMOD_ALT)
-                            LinuxDoCommand(IDM_CHANGEVM);
-                        else if (mod & KMOD_SHIFT)
-                            LinuxDoCommand(IDM_TOGGLEBASIC);
-                        else if (mod & KMOD_CTRL)
-                            ColdStart(v.iVM);
-                        else
-                            FWarmbootVM(v.iVM);
-                    } else if (sc == SDL_SCANCODE_F12 && !(mod & (KMOD_ALT|KMOD_SHIFT)) && is_down) {
-                        LinuxDoCommand(IDM_STRETCH);
-                    } else if (sc == SDL_SCANCODE_F12 && (mod & KMOD_ALT) && is_down) {
-                        LinuxDoCommand(IDM_NTSCPAL);
-                    } else if (sc == SDL_SCANCODE_F12 && (mod & KMOD_SHIFT) && is_down) {
-                        LinuxDoCommand(IDM_COLORMONO);
-                    } else if (sc == SDL_SCANCODE_RETURN && (mod & KMOD_ALT) && is_down) {
-                        LinuxDoCommand(IDM_FULLSCREEN);
-                    } else if (sc == SDL_SCANCODE_S && (mod & KMOD_ALT) && is_down) {
-                        LinuxDoCommand(IDM_TOGGLESOUND);
+                    } else if (UIAcceleratorCommand(sc, mod)) {
+                        /* Menu accelerator (F5 tile, Alt+Enter fullscreen,
+                           F10 warm start, ...): never reaches the VM. A
+                           native menu bar with its own key equivalents
+                           (Cocoa) fires the command itself. */
+                        if (is_down && !UIMenuOwnsAccelerators())
+                            UIMenuCommand(UIAcceleratorCommand(sc, mod));
                     } else {
                         FWinMsgVM(v.iVM, vi.hWnd,
                                   is_down ? WM_KEYDOWN : WM_KEYUP,

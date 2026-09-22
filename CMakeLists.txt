@@ -17,6 +17,30 @@ set(XFORMER_VERSION "10.10.2021")
 
 option(XFORMER_MACOS_BUNDLE
        "macOS: build Xformer10.app instead of a bare executable" ON)
+
+#
+# Menu bar / file dialog backend (see src/ui/ui.h):
+#   native  Win32 menu + common dialogs, or Cocoa NSMenu + NSOpenPanel
+#   sdl     menu bar and file browser drawn inside the SDL window (SDL_ttf)
+#
+if(WIN32 OR APPLE)
+    set(_xf_ui_default "native")
+else()
+    set(_xf_ui_default "sdl")
+endif()
+set(XFORMER_UI "${_xf_ui_default}" CACHE STRING
+    "Menu bar / file dialog backend: native (Windows, macOS) or sdl")
+set_property(CACHE XFORMER_UI PROPERTY STRINGS native sdl)
+if(XFORMER_UI STREQUAL "native")
+    if(NOT (WIN32 OR APPLE))
+        message(FATAL_ERROR "XFORMER_UI=native is only available on Windows and macOS")
+    endif()
+elseif(NOT XFORMER_UI STREQUAL "sdl")
+    message(FATAL_ERROR "XFORMER_UI must be 'native' or 'sdl' (got '${XFORMER_UI}')")
+endif()
+if(APPLE AND XFORMER_UI STREQUAL "native")
+    enable_language(OBJC)
+endif()
 set(XFORMER_CODESIGN_IDENTITY "-" CACHE STRING
     "macOS: codesign identity for the .app ('-' = ad-hoc, empty = don't sign)")
 
@@ -82,29 +106,32 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(SDL2)
 
 #
-# SDL2_ttf
+# SDL2_ttf -- only the SDL UI backend renders text.
 #
 # Build/fetch FreeType etc. internally, rather than requiring them from
 # the host system.
-set(SDL2TTF_VENDORED ON  CACHE BOOL "" FORCE)
-set(SDL2TTF_SAMPLES  OFF CACHE BOOL "" FORCE)
+if(XFORMER_UI STREQUAL "sdl")
+    set(SDL2TTF_VENDORED ON  CACHE BOOL "" FORCE)
+    set(SDL2TTF_SAMPLES  OFF CACHE BOOL "" FORCE)
 
-FetchContent_Declare(
-    SDL2_ttf
-    GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
-    GIT_TAG        release-2.24.0
-    GIT_SHALLOW    TRUE
-)
+    FetchContent_Declare(
+        SDL2_ttf
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL_ttf.git
+        GIT_TAG        release-2.24.0
+        GIT_SHALLOW    TRUE
+    )
 
-FetchContent_MakeAvailable(SDL2_ttf)
+    FetchContent_MakeAvailable(SDL2_ttf)
 
-#
-# fontconfig is only needed by the Unix implementation of font_sdl.c.
-#
-if(UNIX AND NOT APPLE)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
+    #
+    # fontconfig is only needed by the Unix implementation of font_sdl.c.
+    #
+    if(UNIX AND NOT APPLE)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
+    endif()
 endif()
+
 
 add_executable(xformer10
     src/atari8.vm/atari800.c
@@ -136,17 +163,35 @@ add_executable(xformer10
     src/keymap_sdl.c
     src/main_linux.c
     src/stubs_linux.c
-    src/menu_sdl.c
-    src/sdl_filebrowser.c
     src/font_sdl.c
+    src/ui/ui_common.c
 )
+
+#
+# UI backend sources (src/ui/ui.h).
+#
+if(XFORMER_UI STREQUAL "sdl")
+    target_sources(xformer10 PRIVATE
+        src/ui/ui_sdl.c
+        src/ui/sdl_filebrowser.c
+    )
+elseif(WIN32)
+    target_sources(xformer10 PRIVATE src/ui/ui_win32.c)
+elseif(APPLE)
+    target_sources(xformer10 PRIVATE src/ui/ui_cocoa.m)
+    set_source_files_properties(src/ui/ui_cocoa.m PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc"
+    )
+endif()
 
 target_include_directories(xformer10 PRIVATE
     src
     src/atari8.vm
     src/blocklib
     src/res
+    src/ui
 )
+
 target_compile_definitions(xformer10 PRIVATE
     SDL2_ENABLED
 )
@@ -155,11 +200,12 @@ target_compile_definitions(xformer10 PRIVATE
 # Platform-specific definitions/libraries.
 #
 if(WIN32)
-    # Needed by the Windows SDLUIFontPath() implementation if using
-    # SHGetKnownFolderPath(FOLDERID_Fonts).
+    # shell32/ole32: SHGetKnownFolderPath in font_sdl.c and the folder picker
+    # (IFileOpenDialog) in ui_win32.c; comdlg32: GetOpenFileName.
     target_link_libraries(xformer10 PRIVATE
         shell32
         ole32
+        comdlg32
     )
 elseif(APPLE)
     target_compile_definitions(xformer10 PRIVATE
@@ -172,6 +218,13 @@ elseif(APPLE)
         "-framework CoreText"
         "-framework CoreFoundation"
     )
+    if(XFORMER_UI STREQUAL "native")
+        # NSMenu / NSOpenPanel in ui_cocoa.m; UTType for the file filters.
+        target_link_libraries(xformer10 PRIVATE
+            "-framework AppKit"
+            "-framework UniformTypeIdentifiers"
+        )
+    endif()
 
     if(XFORMER_MACOS_BUNDLE)
         set(XFORMER_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/src/res/xformer.icns")
@@ -239,8 +292,13 @@ endif()
 target_link_libraries(xformer10 PRIVATE
     SDL2::SDL2-static
     SDL2::SDL2main
-    SDL2_ttf::SDL2_ttf-static
 )
+
+if(XFORMER_UI STREQUAL "sdl")
+    target_link_libraries(xformer10 PRIVATE
+        SDL2_ttf::SDL2_ttf-static
+    )
+endif()
 
 if(TARGET PkgConfig::FONTCONFIG)
     target_link_libraries(xformer10 PRIVATE
