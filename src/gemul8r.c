@@ -520,49 +520,187 @@ void SacrificeVM()
         DeleteVM(ix, FALSE);    // sorry, you are the sacrifice (FALSE for quick mode)
 }
 
+/* ---- persistent tile-thread pool ------------------------------------------
+   Worker threads are bound to tile SLOTS, not to VMs: VMThread(iV) re-reads
+   ThreadStuff[iV].iThreadVM on every frame. So when the visible set changes
+   (a scroll, a search keystroke, a VM added or deleted) only the slot->VM map
+   needs rewriting; the pool itself is resized only when the number of visible
+   tiles changes (window or tile size). Tearing down and recreating ~100
+   threads on every row scrolled cost 3-4 ms of main-thread time per call on
+   Windows, where thread creation and the kill handshake are far dearer than on
+   Linux, and it also reopened every visible VM's disk images each time.
+   InitThreads() is always called from the main thread between frames, when
+   every worker is parked in WaitForSingleObject on its go event, so the arrays
+   may be reallocated and the map rewritten without synchronization. */
+static int cThreadCap;      /* slots allocated in ThreadStuff / hDoneEvent */
+static int cThreadsAlive;   /* slots with a running thread; >= cThreads. The pool
+                               only grows: when fewer tiles are visible the extra
+                               threads stay parked on their go events (never
+                               signalled, so free), because a partial bottom row
+                               scrolling in and out would otherwise kill and
+                               recreate a row's worth of threads every time. */
+
 extern ULONGLONG gProfUninitTicks;
 
+/* Stop slot i's thread (if any) and close its handles. */
+static void pool_kill_slot(int i)
+{
+    if (ThreadStuff[i].hGoEvent)
+    {
+        ThreadStuff[i].fKillThread = TRUE;
+        SetEvent(ThreadStuff[i].hGoEvent);
+        if (hDoneEvent[i])
+            WaitForSingleObject(hDoneEvent[i], INFINITE);
+        CloseHandle(ThreadStuff[i].hGoEvent);
+        if (ThreadStuff[i].hThread)
+            CloseHandle(ThreadStuff[i].hThread);
+        if (hDoneEvent[i])
+            CloseHandle(hDoneEvent[i]);
+    }
+    ThreadStuff[i].hGoEvent = NULL;
+    ThreadStuff[i].hThread  = NULL;
+    hDoneEvent[i] = NULL;
+}
+
+/* Create the events and thread for slot i. On failure the slot is left empty. */
+static BOOL pool_start_slot(int i)
+{
+    ThreadStuff[i].fKillThread = FALSE;
+    ThreadStuff[i].hThread  = NULL;
+    ThreadStuff[i].hGoEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    hDoneEvent[i]           = CreateEvent(NULL, FALSE, FALSE, NULL);
+
+    // default stack size of 1M wastes tons of memory and limit us to a few VMS only - smallest possible is 64K
+    if (ThreadStuff[i].hGoEvent && hDoneEvent[i])
+        ThreadStuff[i].hThread = CreateThread(NULL, 65536, (void *)VMThread, (LPVOID)(LONG_PTR)i,
+                                              STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+    if (ThreadStuff[i].hThread)
+        return TRUE;
+
+    // don't leave the events existing if the thread doesn't... we might try to wait on it
+    if (ThreadStuff[i].hGoEvent) CloseHandle(ThreadStuff[i].hGoEvent);
+    if (hDoneEvent[i])           CloseHandle(hDoneEvent[i]);
+    ThreadStuff[i].hGoEvent = NULL;
+    hDoneEvent[i] = NULL;
+    return FALSE;
+}
+
+/* Make sure the slot arrays can hold n entries. */
+static BOOL pool_reserve(int n)
+{
+    if (n <= cThreadCap)
+        return TRUE;
+    int cap = n > sMaxTiles ? n : sMaxTiles;    /* one grow covers any window size */
+    ThreadStuffS *p1 = realloc(ThreadStuff, (size_t)cap * sizeof(ThreadStuffS));
+    if (!p1)
+        return FALSE;
+    ThreadStuff = p1;
+    HANDLE *p2 = realloc(hDoneEvent, (size_t)cap * sizeof(HANDLE));
+    if (!p2)
+        return FALSE;                           /* ThreadStuff grew; harmless, cap unchanged */
+    hDoneEvent = p2;
+    memset(&ThreadStuff[cThreadCap], 0, (size_t)(cap - cThreadCap) * sizeof(ThreadStuffS));
+    memset(&hDoneEvent[cThreadCap],  0, (size_t)(cap - cThreadCap) * sizeof(HANDLE));
+    cThreadCap = cap;
+    return TRUE;
+}
+
+/* Bring the pool to nWant slots running the VMs in want[]. Returns FALSE only
+   if a thread could not be created; the pool is then still consistent (cThreads
+   counts the slots that are running) and the caller sacrifices a VM and retries. */
+static BOOL pool_apply(const int *want, int nWant)
+{
+    // Disk images: close for VMs leaving the visible set, open for VMs entering it;
+    // VMs that stay visible are left alone (the old rebuild reopened all of them).
+    // Slot VM indices may be stale after a DeleteVM shifted the array -- the same
+    // caveat the old teardown had -- hence the range guards.
+    unsigned char *mark = v.cVM > 0 ? calloc((size_t)v.cVM, 1) : NULL;
+    if (mark)
+    {
+        for (int i = 0; i < nWant; i++)
+            if (want[i] >= 0 && want[i] < v.cVM) mark[want[i]] |= 1;              // wanted
+        for (int i = 0; i < cThreads; i++)
+            if (ThreadStuff[i].iThreadVM >= 0 && ThreadStuff[i].iThreadVM < v.cVM)
+                mark[ThreadStuff[i].iThreadVM] |= 2;                             // running
+        for (int i = 0; i < cThreads; i++)
+        {
+            int vm = ThreadStuff[i].iThreadVM;
+            if (vm >= 0 && vm < v.cVM && mark[vm] == 2) { FUnInitDisksVM(vm); mark[vm] = 0; }
+        }
+        for (int i = 0; i < nWant; i++)
+        {
+            int vm = want[i];
+            if (vm >= 0 && vm < v.cVM && mark[vm] == 1) { FInitDisksVM(vm); mark[vm] = 3; }
+        }
+        free(mark);
+    }
+    else    // no memory for the marks: fall back to the old close-all / open-all
+    {
+        for (int i = 0; i < cThreads; i++)
+            if (ThreadStuff[i].iThreadVM < v.cVM) FUnInitDisksVM(ThreadStuff[i].iThreadVM);
+        for (int i = 0; i < nWant; i++)
+            FInitDisksVM(want[i]);
+    }
+
+    // Grow the pool if more slots are needed than have ever been alive. Set the
+    // map first so a slot never runs with a stale VM. Fewer slots than alive just
+    // leaves the extra threads parked (see cThreadsAlive).
+    if (nWant > cThreadsAlive)
+    {
+        if (!pool_reserve(nWant))
+        {
+            cThreads = cThreadsAlive;
+            return FALSE;
+        }
+        while (cThreadsAlive < nWant)
+        {
+            ThreadStuff[cThreadsAlive].iThreadVM = want[cThreadsAlive];
+            if (!pool_start_slot(cThreadsAlive))
+            {
+                cThreads = cThreadsAlive;   /* keep the main loop to live slots */
+                return FALSE;
+            }
+            cThreadsAlive++;
+        }
+    }
+    cThreads = nWant;
+
+    // Remap every active slot; tell each VM which tile buffer it draws into.
+    for (int i = 0; i < nWant; i++)
+    {
+        ThreadStuff[i].iThreadVM   = want[i];
+        ThreadStuff[i].fKillThread = FALSE;
+        if (want[i] >= 0 && want[i] < v.cVM)
+            rgpvmi(want[i])->iVisibleTile = i;
+    }
+    return TRUE;
+}
+
+// Stop every thread and free the pool (exit, or a full reset).
 void UninitThreads()
 {
     LARGE_INTEGER tu0, tu1;
     QueryPerformanceCounter(&tu0);
 
-    for (int ii = 0; ii < cThreads; ii++)
+    for (int ii = 0; ii < cThreadsAlive; ii++)
     {
-        if (ThreadStuff[ii].hGoEvent)
-        {
-            // let the VM close its file handles for a while and save resources
-            // it may have been deleted since we last used it
-            // !!! This may be the wrong VM# and we're closing somebody we shouldn't, but it's worse to not
-            // close the ones we should and consume mass resources.
-            if (ThreadStuff[ii].iThreadVM < v.cVM)
-                FUnInitDisksVM(ThreadStuff[ii].iThreadVM);
-
-            // kill the thread executing this event before deleting any of its objects
-            ThreadStuff[ii].fKillThread = TRUE;
-           
-            SetEvent(ThreadStuff[ii].hGoEvent);
-            if (hDoneEvent[ii])
-                WaitForSingleObject(hDoneEvent[ii], INFINITE);
-            
-            CloseHandle(ThreadStuff[ii].hGoEvent);
-            
-            if (ThreadStuff[ii].hThread)
-                CloseHandle(ThreadStuff[ii].hThread);
-            
-            if (hDoneEvent[ii])
-                CloseHandle(hDoneEvent[ii]);
-        }
+        // let the VM close its file handles for a while and save resources
+        // it may have been deleted since we last used it
+        // !!! This may be the wrong VM# and we're closing somebody we shouldn't, but it's worse to not
+        // close the ones we should and consume mass resources.
+        // (parked slots past cThreads already closed theirs when they left the visible set)
+        if (ii < cThreads && ThreadStuff[ii].hGoEvent && ThreadStuff[ii].iThreadVM < v.cVM)
+            FUnInitDisksVM(ThreadStuff[ii].iThreadVM);
+        pool_kill_slot(ii);
     }
 
-    if (ThreadStuff)
-        free(ThreadStuff);
+    free(ThreadStuff);
     ThreadStuff = NULL;
-    if (hDoneEvent)
-        free(hDoneEvent);
+    free(hDoneEvent);
     hDoneEvent = NULL;
-
     cThreads = 0;
+    cThreadsAlive = 0;
+    cThreadCap = 0;
 
     QueryPerformanceCounter(&tu1);
     gProfUninitTicks += (ULONGLONG)(tu1.QuadPart - tu0.QuadPart);
@@ -574,10 +712,9 @@ void UninitThreads()
 static BOOL InitThreadsBody(void);
 
 /* XF_RENDER_PROF accounting (read and reset by the SDL main loop's once-a-second
-   [frame] line): how often InitThreads() ran and what it cost. Every call tears
-   down and recreates every tile thread, which is the prime suspect for scroll
-   stutter on a window with ~100 tiles. Only the outermost call is timed (it can
-   recurse once when a scroll overshoots the bottom). */
+   [stall] line): how often InitThreads() ran and what it cost. Only the
+   outermost call is timed (it can recurse once when a scroll overshoots the
+   bottom). */
 ULONGLONG gProfInitCalls, gProfInitTicks, gProfInitMaxTicks, gProfUninitTicks;
 
 BOOL InitThreads()
@@ -611,9 +748,15 @@ static BOOL InitThreadsBody(void)
     //ODS("InitThreads\n");
     BOOL fNeedFix = FALSE;
 
-ThreadTry:
+    // The desired VM for each tile slot; applied to the pool in one step at the end.
+    int cap = sMaxTiles > 2 ? sMaxTiles : 2;
+    int *want = malloc((size_t)cap * sizeof(int));
+    if (!want)
+        return FALSE;
 
-    UninitThreads();
+ThreadTry:
+    ;
+    int nWant = 0;
 
     if (v.cVM)
     {
@@ -621,18 +764,10 @@ ThreadTry:
         {
             char cT[MAX_PATH];
 
-            ThreadStuff = malloc(sMaxTiles * sizeof(ThreadStuffS)); // not sure how many are visible yet, but that's an upper bound
-            if (ThreadStuff)
-                memset(ThreadStuff, 0, sMaxTiles * sizeof(ThreadStuffS));
-
-            hDoneEvent = malloc(sMaxTiles * sizeof(HANDLE));
-            if (!ThreadStuff || !hDoneEvent)
-                goto ThreadFail;
-
             RECT rect;
             GetClientRect(vi.hWnd, &rect);
 
-            // figure out the first visible tile to save everybody time who needs to know that     
+            // figure out the first visible tile to save everybody time who needs to know that
             int nx = sTilesPerRow;
             int y = v.sWheelOffset;
             int l = (int)strlen(cGemKeys);
@@ -669,7 +804,7 @@ ThreadTry:
                 for (int x = 0; x < nx * sTileSize.x; x += sTileSize.x /* * vi.fXscale*/)
                 {
                     Assert(l || y + sTileSize.y > 0); // we should be optimized when not searching
-            
+
                     BOOL fOK = FALSE;
 
                     // keep looking for a tile in this spot that satisifes the criteria
@@ -689,46 +824,13 @@ ThreadTry:
                         // But only give it a thread if it's visible
                         if (fOK && y + sTileSize.y > 0)
                         {
-                            if (cThreads >= sMaxTiles) { y = rect.bottom; break; }
+                            if (nWant >= sMaxTiles) { y = rect.bottom; break; }
 
                             // We found the actual first visible tile
                             if (nFirstVisibleTile == -1)
                                 nFirstVisibleTile = iVM;
 
-                            ThreadStuff[cThreads].fKillThread = FALSE;
-                            ThreadStuff[cThreads].iThreadVM = iVM;
-                            ThreadStuff[cThreads].hGoEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-                            hDoneEvent[cThreads] = CreateEvent(NULL, FALSE, FALSE, NULL);
-
-                            // tell the VM it's waking up and can open it's files again (it will probably delay that until necessary)
-                            FInitDisksVM(ThreadStuff[cThreads].iThreadVM);
-
-                            // if the video card sucks, we'll need to know this to know which small buffer to use
-                            rgpvmi(ThreadStuff[cThreads].iThreadVM)->iVisibleTile = cThreads;
-
-                            // default stack size of 1M wastes tons of memory and limit us to a few VMS only - smallest possible is 64K
-                            if (!ThreadStuff[cThreads].hGoEvent || !hDoneEvent[cThreads] ||
-                                !(ThreadStuff[cThreads].hThread = CreateThread(NULL, 65536, (void *)VMThread, (LPVOID)(LONG_PTR)cThreads,
-                                    STACK_SIZE_PARAM_IS_A_RESERVATION, NULL)))
-                            {
-                                // don't leave the events existing if the thread doesn't... we might try to wait on it
-                                if (ThreadStuff[cThreads].hGoEvent)
-                                {
-                                    CloseHandle(ThreadStuff[cThreads].hGoEvent);
-                                    ThreadStuff[cThreads].hGoEvent = NULL;
-                                }
-                                if (hDoneEvent[cThreads])
-                                {
-                                    CloseHandle(hDoneEvent[cThreads]);
-                                    hDoneEvent[cThreads] = NULL;
-                                }
-
-                                FUnInitDisksVM(ThreadStuff[cThreads].iThreadVM);
-
-                                goto ThreadFail;
-                            }
-                            cThreads++;
-                            Assert(cThreads <= sMaxTiles);  // uh oh, something bad happened, we're about to corrupt
+                            want[nWant++] = iVM;
                         }
 
                         // next tile
@@ -739,12 +841,13 @@ ThreadTry:
                         {
                             // if we're on the left side and didn't put anything there, don't go down an extra row
                             int bot = y + ((x || fOK) ? sTileSize.y : 0) - rect.bottom;  // we found the bottom!
-                            
+
                             // Uh oh, we've already scrolled too far (it happens, it's very complicated to predict)
                             if (bot < 0 && v.sWheelOffset < 0)
                             {
                                 v.sWheelOffset = min(0, v.sWheelOffset - bot);  // don't go +ve
                                 sTileBottom = -v.sWheelOffset;
+                                free(want);
                                 InitThreads();  // do it again, but right this time (first visible tile may change due to this)
                                 return TRUE;
                             }
@@ -759,91 +862,22 @@ ThreadTry:
                 if (v.cVM == iVM)
                     break;
             }
-
-            if (cThreads < sMaxTiles)
-            {
-                if (cThreads)
-                {
-                    void *p1 = realloc(ThreadStuff, cThreads * sizeof(ThreadStuffS));
-                    void *p2 = realloc(hDoneEvent, cThreads * sizeof(HANDLE));
-                    if (!p1 || !p2)
-                    {
-                        free(ThreadStuff);
-                        free(hDoneEvent);
-                        ThreadStuff = NULL;
-                        hDoneEvent = NULL;
-                        goto ThreadFail;
-                    }
-                    ThreadStuff = p1;
-                    hDoneEvent = p2;
-                }
-                else
-                {
-                    free(ThreadStuff);
-                    free(hDoneEvent);
-                    ThreadStuff = NULL;
-                    hDoneEvent = NULL;
-                }
-            }
         }
 
         // NOT TILING - only 1 VM to worry about (well, maybe two when playing roulette)
         else if (v.iVM > -1)
         {
-            int numt = sPan ? 2 : 1;    // is there a 2nd VM showing because we're scrolling?
-            //ODS("Need %d threads\n", numt);
-            ThreadStuff = malloc(sizeof(ThreadStuffS) * numt);
-            if (ThreadStuff)
-                memset(ThreadStuff, 0, sizeof(ThreadStuffS) * numt);
-            hDoneEvent = malloc(sizeof(HANDLE) * numt);
-            if (!ThreadStuff || !hDoneEvent)
-                goto ThreadFail;
-
-            for (int x = 0; x < numt; x++)
-            {
-                ThreadStuff[x].fKillThread = FALSE;
-                if (x == 0)
-                    ThreadStuff[x].iThreadVM = v.iVM;
-                else if (sPan > 0)
-                    ThreadStuff[x].iThreadVM = sVMPrev;
-                else
-                    ThreadStuff[x].iThreadVM = sVMNext;
-
-                ThreadStuff[x].hGoEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-                hDoneEvent[x] = CreateEvent(NULL, FALSE, FALSE, NULL);
-                
-                // tell the VM it's waking up and can open it's files again (it will probably delay that until necessary)
-                FInitDisksVM(ThreadStuff[x].iThreadVM);
-
-                // give this thread a buffer to use for the screen
-                rgpvmi(ThreadStuff[x].iThreadVM)->iVisibleTile = x;
-
-                // default stack size of 1M wastes tons of memory and limit us to a few VMS only - smallest possible is 64K
-                if (!ThreadStuff[x].hGoEvent || !hDoneEvent[x] ||
-                    !(ThreadStuff[x].hThread = CreateThread(NULL, 65536, (void *)VMThread, (LPVOID)(LONG_PTR)x,
-                            STACK_SIZE_PARAM_IS_A_RESERVATION, NULL)))
-                {
-                    // don't leave the events existing if the thread doesn't... we might try to wait on it
-                    if (ThreadStuff[x].hGoEvent)
-                    {
-                        CloseHandle(ThreadStuff[x].hGoEvent);
-                        ThreadStuff[x].hGoEvent = NULL;
-                    }
-                    if (hDoneEvent[x])
-                    {
-                        CloseHandle(hDoneEvent[x]);
-                        hDoneEvent[x] = NULL;
-                    }
-
-                    FUnInitDisksVM(ThreadStuff[x].iThreadVM);
-
-                    goto ThreadFail;
-                }
-                cThreads++;
-            }
+            want[nWant++] = v.iVM;
+            if (sPan)   // is there a 2nd VM showing because we're scrolling?
+                want[nWant++] = sPan > 0 ? sVMPrev : sVMNext;
         }
     }
-    
+
+    if (!pool_apply(want, nWant))
+        goto ThreadFail;
+
+    free(want);
+
     // we deleted something, the menus need fixing, but it's slow so don't always do it
     if (fNeedFix)
         FixAllMenus(TRUE);
