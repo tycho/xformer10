@@ -13,6 +13,20 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 include(FetchContent)
 
 #
+# Common CFLAGS for Visual Studio builds
+#
+if(CMAKE_GENERATOR MATCHES "Visual Studio")
+	add_compile_options(
+		# Inline any suitable
+		/Ob2
+		# Enable intrinsic functions
+		/Oi
+		# Multi-process build
+		/MP
+	)
+endif()
+
+#
 # Build all vendored libraries statically unless overridden explicitly.
 #
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build dependencies as static libraries" FORCE)
