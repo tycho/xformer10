@@ -520,8 +520,13 @@ void SacrificeVM()
         DeleteVM(ix, FALSE);    // sorry, you are the sacrifice (FALSE for quick mode)
 }
 
+extern ULONGLONG gProfUninitTicks;
+
 void UninitThreads()
 {
+    LARGE_INTEGER tu0, tu1;
+    QueryPerformanceCounter(&tu0);
+
     for (int ii = 0; ii < cThreads; ii++)
     {
         if (ThreadStuff[ii].hGoEvent)
@@ -558,12 +563,42 @@ void UninitThreads()
     hDoneEvent = NULL;
 
     cThreads = 0;
+
+    QueryPerformanceCounter(&tu1);
+    gProfUninitTicks += (ULONGLONG)(tu1.QuadPart - tu0.QuadPart);
 }
 
 // Must be called every time the size of the window or the display changes, or sWheelOffset moves, or a VM is created or destroyed
 // Figure out which tiles are visible and set up that many threads
 //
+static BOOL InitThreadsBody(void);
+
+/* XF_RENDER_PROF accounting (read and reset by the SDL main loop's once-a-second
+   [frame] line): how often InitThreads() ran and what it cost. Every call tears
+   down and recreates every tile thread, which is the prime suspect for scroll
+   stutter on a window with ~100 tiles. Only the outermost call is timed (it can
+   recurse once when a scroll overshoots the bottom). */
+ULONGLONG gProfInitCalls, gProfInitTicks, gProfInitMaxTicks, gProfUninitTicks;
+
 BOOL InitThreads()
+{
+    static int depth;
+    LARGE_INTEGER t0, t1;
+    if (depth++ == 0)
+        QueryPerformanceCounter(&t0);
+    BOOL f = InitThreadsBody();
+    if (--depth == 0)
+    {
+        QueryPerformanceCounter(&t1);
+        ULONGLONG dt = (ULONGLONG)(t1.QuadPart - t0.QuadPart);
+        gProfInitCalls++;
+        gProfInitTicks += dt;
+        if (dt > gProfInitMaxTicks) gProfInitMaxTicks = dt;
+    }
+    return f;
+}
+
+static BOOL InitThreadsBody(void)
 {
     // if we saved space to make sure making VMs for all the tiles wouldn't run out of memory, free that as soon as we tile
     // and we've actually loaded everything in

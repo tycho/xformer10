@@ -281,6 +281,10 @@ int main(int argc, char **argv)
 
     SDL_Event e;
     while (!vi.fQuitting) {
+        /* XF_RENDER_PROF: time the event pump separately -- scrolling does its
+           thread rebuilds (ScrollTiles -> InitThreads) from inside it -- and the
+           whole iteration up to the throttle, to find where a stutter's time goes. */
+        Uint64 _l0 = SDL_GetPerformanceCounter(), _ev1 = 0;
         while (SDL_PollEvent(&e)) {
             if (MenuHandleEvent(&e)) continue;
             if (e.type == SDL_QUIT) {
@@ -467,19 +471,32 @@ int main(int argc, char **argv)
                 }
             }
         }
+        _ev1 = SDL_GetPerformanceCounter();
+
         /* Throttle rendering to <=70 Hz like the Windows loop: emulating one
            guest frame per iteration is cheap, but presenting every one just
            draws duplicate frames. Gating the present is also what makes turbo
            effective — with vsync dropped in turbo (see IDM_TURBO), the
            non-render iterations carry no wait at all, so the guest free-runs
-           well past the display refresh rate. */
+           well past the display refresh rate.
+
+           The time gate applies only in turbo. At emulated speed the throttle
+           below already paces the loop to the guest frame rate (60 NTSC / 50
+           PAL, both under the cap), so every iteration should draw. Gating on
+           wall time there was actively harmful: the timestamp is taken after
+           the event pump, whose length varies by several ms whenever a scroll
+           crosses a tile row (InitThreads rebuilds ~100 threads), so the
+           measured gap between consecutive gates swung around the 14 ms
+           threshold and roughly every such frame's successor was emulated but
+           not drawn -- a 2-frame hold, 5-15 times a second while scrolling a
+           large tiled window, felt as micro-stutter. */
         {
             static Uint64 lastRenderMs;
             Uint64 nowMs = SDL_GetTicks64();
             int hz = v.vRefresh + 1;
             if (hz > 70) hz = 70;
             if (hz < 1)  hz = 1;
-            if (nowMs - lastRenderMs >= (Uint64)(1000 / hz)) {
+            if (fBrakes || nowMs - lastRenderMs >= (Uint64)(1000 / hz)) {
                 lastRenderMs = nowMs;
                 fRenderThisTime = TRUE;
             } else {
@@ -582,19 +599,47 @@ int main(int argc, char **argv)
            Also counts loop iterations and rendered frames per second, which is the
            first thing to check when pacing feels wrong: it should read ~60/~60. */
         if (rprof) {
-            static Uint64 last;
-            static int nLoops, nRenders;
+            extern ULONGLONG gProfInitCalls, gProfInitTicks, gProfInitMaxTicks, gProfUninitTicks;
+            static Uint64 last, lastLoopStart;
+            static int nLoops, nRenders, nLong, nLate, nEarly;
+            static double maxBusy, maxEv, minIv = 1e9, maxIv;
+            double f = 1e3 / (double)SDL_GetPerformanceFrequency();
+            /* frame-to-frame interval: pacing jitter is what reads as judder when
+               the tile grid is moving, even if no frame is individually late */
+            if (lastLoopStart) {
+                double iv = (double)(_l0 - lastLoopStart) * f;
+                if (iv < minIv) minIv = iv;
+                if (iv > maxIv) maxIv = iv;
+                if (iv > 24.0) nLate++;      /* ~1.5 jiffies: a visibly held frame */
+                if (iv < 10.0) nEarly++;     /* catch-up frame right after one */
+            }
+            lastLoopStart = _l0;
+            /* busy = this iteration so far (events + emul + render), i.e. everything
+               but the throttle sleep; > one guest jiffy means a dropped frame */
+            double busy = (double)(SDL_GetPerformanceCounter() - _l0) * f;
+            double ev   = _ev1 > _l0 ? (double)(_ev1 - _l0) * f : 0.0;
+            if (busy > maxBusy) maxBusy = busy;
+            if (ev > maxEv)     maxEv = ev;
+            if (busy > 16.7)    nLong++;
             nLoops++;
             if (fRenderThisTime) nRenders++;
             Uint64 now = SDL_GetTicks64();
             if (now - last >= 1000) {
                 last = now;
-                double f = 1e3 / (double)SDL_GetPerformanceFrequency();
                 fprintf(stderr, "[frame] emul %.2f + render %.2f ms (render incl. present), %d loops/s %d renders/s\n",
                         _e1 > _e0 ? (double)(_e1 - _e0) * f : 0.0,
                         _r1 > _r0 ? (double)(_r1 - _r0) * f : 0.0,
                         nLoops, nRenders);
-                nLoops = nRenders = 0;
+                fprintf(stderr, "[stall] worst frame %.1f ms, worst event pump %.1f ms, %d frames >16.7 ms; "
+                                "interval %.1f..%.1f ms, %d short (<10) %d long (>24); "
+                                "InitThreads x%llu: %.1f ms total (max %.1f, teardown %.1f)\n",
+                        maxBusy, maxEv, nLong,
+                        minIv < 1e8 ? minIv : 0.0, maxIv, nEarly, nLate,
+                        gProfInitCalls, (double)gProfInitTicks * f,
+                        (double)gProfInitMaxTicks * f, (double)gProfUninitTicks * f);
+                nLoops = nRenders = nLong = nLate = nEarly = 0;
+                maxBusy = maxEv = maxIv = 0.0; minIv = 1e9;
+                gProfInitCalls = gProfInitTicks = gProfInitMaxTicks = gProfUninitTicks = 0;
             }
         }
 
