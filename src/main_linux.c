@@ -145,8 +145,8 @@ int main(int argc, char **argv)
     QueryPerformanceCounter(&qpc);
     vi.qpcCold = qpc.QuadPart;
 
-    rgpvm = malloc(128 * (sizeof(VM) + sizeof(VMINST)));
     cpvm = 128;
+    rgpvm = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, cpvm * (sizeof(VM) + sizeof(VMINST)));
 
     InitProperties();
     LoadProperties(NULL, FALSE);
@@ -499,7 +499,18 @@ int main(int argc, char **argv)
             if (rprof) _e0 = SDL_GetPerformanceCounter();
             for (int t = 0; t < cThreads; t++)
                 SetEvent(ThreadStuff[t].hGoEvent);
-            WaitForMultipleObjects(cThreads, hDoneEvent, TRUE, INFINITE);
+            /* Wait for every tile thread to finish this frame, in groups of
+               MAXIMUM_WAIT_OBJECTS. On Windows WaitForMultipleObjects is the
+               real Win32 API and fails immediately (WAIT_FAILED, no wait) when
+               nCount > 64; a maximized window on a large display has far more
+               than 64 visible tiles, so a single call would let the main thread
+               race ahead into InitThreads()/DeleteVM() and free rgpvm[] and
+               ThreadStuff[] out from under threads still executing -> use-
+               after-free. Chunk exactly like the Windows message loop does. */
+            for (int cT = cThreads; cT > 0; cT -= MAXIMUM_WAIT_OBJECTS) {
+                int n = cT < MAXIMUM_WAIT_OBJECTS ? cT : MAXIMUM_WAIT_OBJECTS;
+                WaitForMultipleObjects(n, &hDoneEvent[cThreads - cT], TRUE, INFINITE);
+            }
             if (rprof) _e1 = SDL_GetPerformanceCounter();
 
             /* A VM stopped executing this frame (vi.fExecuting got reset): it ran
