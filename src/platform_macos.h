@@ -27,5 +27,9 @@ typedef void (*MacOSScrollFn)(float dy, int precise);
    zero-delta gesture-phase events, so it can't be matched up reliably. */
 void MacOSPlatformInit(MacOSScrollFn fn);
 
+/* XF_RENDER_PROF diagnostic: log NSWindow / CAMetalLayer state to stderr. */
+struct SDL_Window;
+void MacOSDebugWindowState(struct SDL_Window *w);
+
 #endif /* __APPLE__ */
 #endif /* PLATFORM_MACOS_H */

@@ -324,6 +324,16 @@ BOOL InitDrawing(int dx, int dy, int bpp, HANDLE hwndApp, BOOL fReInit)
                                SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE |
                                SDL_WINDOW_ALLOW_HIGHDPI);
     if (!gSDLWin) return FALSE;
+    /* Activate the app and order the window front. SDL 2.32 no longer does
+       this on macOS 14+ (SDL_HINT_MAC_BACKGROUND_APP defaults on), so a
+       window launched from a terminal comes up behind it, un-activated. On
+       macOS 27 the Metal present of such a window is not vsync-paced:
+       SDL_RenderPresent returns in well under a millisecond, and the
+       title-bar speed %, which is measured across that wait, reads ~1000%
+       even though the emulation loop is still braked to real time. Raising
+       the window at creation restores the pre-SDL-2.32 behaviour (front,
+       active, paced). No-op where the window is already front. */
+    SDL_RaiseWindow(gSDLWin);
     gSDLRen = SDL_CreateRenderer(gSDLWin, -1, SDL_RENDERER_PRESENTVSYNC);
     if (!gSDLRen) return FALSE;
     ApplyBackingScale();
@@ -535,6 +545,16 @@ void RenderBitmap_SDL(void)
             }
         }
         SDL_RenderCopy(gSDLRen, gSDLTex, NULL, &dest);
+        {   /* XF_RENDER_PROF: per-frame colour marker for the screen probe */
+            static int prof = -1, ctr;
+            if (prof < 0) prof = getenv("XF_RENDER_PROF") ? 1 : 0;
+            if (prof) {
+                ctr++;
+                SDL_Rect m = {0, MENU_H, 24, 24};
+                SDL_SetRenderDrawColor(gSDLRen, (Uint8)(ctr * 5), (Uint8)(ctr * 11), (Uint8)(ctr * 23), 255);
+                SDL_RenderFillRect(gSDLRen, &m);
+            }
+        }
     }
 done:
     UIMenuRender(gSDLRen);

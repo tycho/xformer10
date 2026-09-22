@@ -23,6 +23,7 @@
 #include "ui.h"
 #ifdef __APPLE__
 #include "platform_macos.h"
+#include "ddlib_sdl.h"
 #endif
 
 void UninitThreads(void);
@@ -676,6 +677,9 @@ int main(int argc, char **argv)
                         minIv < 1e8 ? minIv : 0.0, maxIv, nEarly, nLate,
                         gProfInitCalls, (double)gProfInitTicks * f,
                         (double)gProfInitMaxTicks * f, (double)gProfUninitTicks * f);
+#ifdef __APPLE__
+                MacOSDebugWindowState(GetSDLWindow());
+#endif
                 nLoops = nRenders = nLong = nLate = nEarly = 0;
                 maxBusy = maxEv = maxIv = 0.0; minIv = 1e9;
                 gProfInitCalls = gProfInitTicks = gProfInitMaxTicks = gProfUninitTicks = 0;

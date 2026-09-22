@@ -9,7 +9,51 @@
 #if defined(SDL2_ENABLED) && defined(__APPLE__)
 
 #import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
+#import <Metal/Metal.h>
+#include <SDL.h>
+#include <SDL_syswm.h>
 #include "platform_macos.h"
+
+static CAMetalLayer *find_metal_layer(NSView *root)
+{
+    NSMutableArray *stack = [NSMutableArray arrayWithObject:root];
+    while (stack.count) {
+        NSView *vw = stack.lastObject; [stack removeLastObject];
+        if ([vw.layer isKindOfClass:[CAMetalLayer class]]) return (CAMetalLayer *)vw.layer;
+        [stack addObjectsFromArray:vw.subviews];
+    }
+    return nil;
+}
+
+/* XF_RENDER_PROF diagnostic (see main_linux.c): dump the NSWindow and
+   CAMetalLayer state once a second. Added while chasing a macOS 27 / M5
+   report of "1000% speed, nothing drawn": SDL_RenderPresent stops blocking
+   on vsync whenever the window is not being composited (launched behind
+   another window and never activated, fully covered, or mostly off-screen),
+   which makes the title-bar speed % -- measured across the present -- read
+   ~1000% while the emulation itself stays correctly paced. */
+void MacOSDebugWindowState(SDL_Window *w)
+{
+    SDL_SysWMinfo info; SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(w, &info)) return;
+    NSWindow *nw = info.info.cocoa.window;
+    CAMetalLayer *ml = find_metal_layer(nw.contentView);
+    CALayer *layer = ml ? (CALayer *)ml : nw.contentView.layer;
+    NSRect fr = nw.frame;
+    fprintf(stderr, "[win] appActive=%d appOccl=%lu key=%d main=%d visible=%d onActiveSpace=%d winOccl=%lu "
+                    "num=%ld frame=(%.0f,%.0f %.0fx%.0f) screen=%d layer=%s drawable=%.0fx%.0f sync=%d dev=%s\n",
+            [NSApp isActive], (unsigned long)[NSApp occlusionState], nw.isKeyWindow, nw.isMainWindow,
+            nw.isVisible, nw.isOnActiveSpace, (unsigned long)nw.occlusionState, (long)nw.windowNumber,
+            fr.origin.x, fr.origin.y, fr.size.width, fr.size.height, nw.screen != nil,
+            layer ? [NSStringFromClass([layer class]) UTF8String] : "none",
+            ml ? ml.drawableSize.width : 0, ml ? ml.drawableSize.height : 0,
+            ml ? (int)ml.displaySyncEnabled : -1, ml && ml.device ? [ml.device.name UTF8String] : "nil");
+    if (ml) fprintf(stderr, "[mtl] maxDrawables=%lu allowsTimeout=%d framebufferOnly=%d hidden=%d opaque=%d bounds=%.0fx%.0f scale=%.2f super=%s\n",
+            (unsigned long)ml.maximumDrawableCount, (int)ml.allowsNextDrawableTimeout, (int)ml.framebufferOnly,
+            (int)ml.hidden, (int)ml.opaque, ml.bounds.size.width, ml.bounds.size.height, ml.contentsScale,
+            ml.superlayer ? "yes" : "NO");
+}
 
 static MacOSScrollFn sScrollFn;
 
