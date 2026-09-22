@@ -117,6 +117,10 @@ int main(int argc, char **argv)
         return 1;
     }
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
+    /* Deliver the click that activates the window too. SDL drops it by
+       default, so the first click on the in-window menu bar (or a tile) after
+       switching apps only focused the window and had to be repeated. */
+    SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 
     if (SDL_NumJoysticks() > 0) {
         gJoy = SDL_JoystickOpen(0);
