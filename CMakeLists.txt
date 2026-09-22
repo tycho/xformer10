@@ -38,8 +38,8 @@ if(XFORMER_UI STREQUAL "native")
 elseif(NOT XFORMER_UI STREQUAL "sdl")
     message(FATAL_ERROR "XFORMER_UI must be 'native' or 'sdl' (got '${XFORMER_UI}')")
 endif()
-if(APPLE AND XFORMER_UI STREQUAL "native")
-    enable_language(OBJC)
+if(APPLE)
+    enable_language(OBJC)   # ui_cocoa.m, platform_macos.m
 endif()
 set(XFORMER_CODESIGN_IDENTITY "-" CACHE STRING
     "macOS: codesign identity for the .app ('-' = ad-hoc, empty = don't sign)")
@@ -212,6 +212,13 @@ elseif(APPLE)
         LINUX_PORT
     )
 
+    # Process setup SDL can't do (momentum scrolling, trackpad detection).
+    target_sources(xformer10 PRIVATE src/platform_macos.m)
+    set_source_files_properties(src/platform_macos.m PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc"
+    )
+    target_link_libraries(xformer10 PRIVATE "-framework AppKit")
+
     # CoreText resolves the UI font in font_sdl.c. Everything else the app
     # needs (Cocoa, CoreAudio, Metal, ...) is carried by SDL2::SDL2-static.
     target_link_libraries(xformer10 PRIVATE
@@ -219,9 +226,8 @@ elseif(APPLE)
         "-framework CoreFoundation"
     )
     if(XFORMER_UI STREQUAL "native")
-        # NSMenu / NSOpenPanel in ui_cocoa.m; UTType for the file filters.
+        # UTType for the NSOpenPanel file filters in ui_cocoa.m.
         target_link_libraries(xformer10 PRIVATE
-            "-framework AppKit"
             "-framework UniformTypeIdentifiers"
         )
     endif()

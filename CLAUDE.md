@@ -85,6 +85,7 @@ The live C source list is the `add_executable(xformer10 ...)` block in **`CMakeL
 | `src/ui/sdl_filebrowser.c` / `.h` | Modal SDL2 file browser used by the SDL backend |
 | `src/ui/ui_win32.c` | Native Win32 backend: HMENU on the SDL window, GetOpenFileName, IFileOpenDialog |
 | `src/ui/ui_cocoa.m` | Native macOS backend: NSMenu in the system menu bar, NSOpenPanel/NSSavePanel |
+| `src/platform_macos.m` / `.h` | macOS process setup outside SDL: momentum scrolling on, trackpad pixel deltas for the tile view |
 | `src/keymap_sdl.c` | SDL scancode → PS/2 scan code mapping |
 | `src/stubs_linux.c` | Win32 stubs that are no-ops on Linux |
 | `src/compat_win.h` | Win32 type/macro compatibility layer |

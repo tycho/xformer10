@@ -21,6 +21,9 @@
 #include "atari800.h"
 #include "res/resource.h"
 #include "ui.h"
+#ifdef __APPLE__
+#include "platform_macos.h"
+#endif
 
 void UninitThreads(void);
 void LinuxDoCommand(int idm);
@@ -121,6 +124,9 @@ int main(int argc, char **argv)
        default, so the first click on the in-window menu bar (or a tile) after
        switching apps only focused the window and had to be repeated. */
     SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
+#ifdef __APPLE__
+    MacOSPlatformInit();
+#endif
 
     if (SDL_NumJoysticks() > 0) {
         gJoy = SDL_JoystickOpen(0);
@@ -373,11 +379,31 @@ int main(int argc, char **argv)
                 }
             } else if (e.type == SDL_MOUSEWHEEL && v.fTiling && v.cVM > 0
                        && sTilesPerRow > 0 && (int)sTileSize.y > 0) {
-                /* smooth pixel scrolling: ~8px per notch, 64 with "Mouse Wheel
-                   Sensitivity High". ScrollTiles() clamps the offset and re-inits
-                   threads only when the visible row set changes */
-                v.sWheelOffset += e.wheel.y * (v.fWheelSensitive ? 64 : 8);
-                ScrollTiles();
+                /* smooth pixel scrolling: ~8px per wheel notch, 64 with "Mouse
+                   Wheel Sensitivity High". On macOS a trackpad reports pixel-
+                   precise deltas in window points (read back from AppKit, since
+                   SDL rescales them to line units), and with momentum enabled
+                   (MacOSPlatformInit) keeps sending decaying ones after the
+                   fingers lift, so those scroll 1:1 (3x on High). The sub-pixel
+                   remainder is carried over so a slow drag isn't truncated away.
+                   ScrollTiles() clamps the offset and re-inits threads only when
+                   the visible row set changes */
+                static float acc;
+                float px = e.wheel.preciseY * (v.fWheelSensitive ? 64.f : 8.f);
+#ifdef __APPLE__
+                {
+                    int precise; float dy;
+                    if (MacOSPopScroll(&precise, &dy) && precise)
+                        px = dy * (v.fWheelSensitive ? 3.f : 1.f);
+                }
+#endif
+                acc += px;
+                int whole = (int)acc;
+                acc -= (float)whole;
+                if (whole) {
+                    v.sWheelOffset += whole;
+                    ScrollTiles();
+                }
             } else if (e.type == SDL_DROPFILE) {
                 char *path = e.drop.file;
                 if (path) {
