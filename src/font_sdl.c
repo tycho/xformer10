@@ -6,10 +6,14 @@
 
     Font file locations differ by platform (and by distro on Linux), so a
     hardcoded path makes TTF_OpenFont fail wherever that file is absent — which
-    would silently remove the menu bar and every file dialog. On Windows the
-    font is resolved from the system Fonts folder; on Linux, through
-    fontconfig, which is present on every Linux desktop and always yields an
-    installed face.
+    would silently remove the menu bar and every file dialog. Each platform
+    therefore asks its native font machinery for an installed face:
+
+      Windows  the system Fonts folder (Segoe UI, then Arial, then Tahoma)
+      macOS    CoreText: the system UI font (San Francisco), then Helvetica
+               Neue, Helvetica, Lucida Grande, Arial, Geneva
+      Linux    fontconfig, which is present on every Linux desktop and always
+               yields an installed face
 
 ****************************************************************************/
 
@@ -97,6 +101,102 @@ const char *SDLUIFontPath(void)
     return NULL;
 }
 
+#elif defined(__APPLE__)
+
+#include <unistd.h>
+#include <limits.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreText/CoreText.h>
+
+/*
+ * Copy the on-disk file of a CoreText font into out. Returns 1 if the font
+ * is backed by a readable file, 0 otherwise (e.g. a font with no URL).
+ */
+static int
+CTFontFilePath(CTFontRef font, char *out, size_t cb)
+{
+    if (!font)
+        return 0;
+
+    CFURLRef url = CTFontCopyAttribute(font, kCTFontURLAttribute);
+    if (!url)
+        return 0;
+
+    int ok = CFURLGetFileSystemRepresentation(url, true, (UInt8 *)out,
+                                              (CFIndex)cb) &&
+             out[0] && access(out, R_OK) == 0;
+
+    CFRelease(url);
+    return ok;
+}
+
+const char *SDLUIFontPath(void)
+{
+    static char cached[PATH_MAX];
+    static int resolved = 0;
+
+    if (resolved)
+        return cached[0] ? cached : NULL;
+    resolved = 1;
+
+    /*
+     * 1. Explicit override.
+     */
+    const char *env = getenv("XFORMER_FONT");
+    if (env && env[0] && access(env, R_OK) == 0) {
+        strncpy(cached, env, sizeof cached - 1);
+        cached[sizeof cached - 1] = '\0';
+        return cached;
+    }
+
+    /*
+     * 2. The system UI font (San Francisco on every supported macOS).
+     *
+     * CoreText resolves it to /System/Library/Fonts/SFNS.ttf, a variable font
+     * whose default instance is Regular, which is the instance FreeType
+     * loads. Asking CoreText rather than hardcoding the path keeps this
+     * working if Apple moves or renames the file.
+     */
+    CTFontRef ui = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, 13.0,
+                                                 NULL);
+    if (ui) {
+        int ok = CTFontFilePath(ui, cached, sizeof cached);
+        CFRelease(ui);
+        if (ok)
+            return cached;
+    }
+
+    /*
+     * 3. Well-known faces that ship with macOS, in preference order.
+     *
+     * These are all .ttc collections (or plain .ttf) whose Regular face sits
+     * at index 0, which is the face TTF_OpenFont picks. CoreText substitutes
+     * a default font for any name it cannot find, so every iteration yields
+     * *some* installed face; the readability check is what decides.
+     */
+    static const CFStringRef names[] = {
+        CFSTR("Helvetica Neue"),
+        CFSTR("Helvetica"),
+        CFSTR("Lucida Grande"),
+        CFSTR("Arial"),
+        CFSTR("Geneva"),
+    };
+
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; ++i) {
+        CTFontRef f = CTFontCreateWithName(names[i], 13.0, NULL);
+        if (!f)
+            continue;
+
+        int ok = CTFontFilePath(f, cached, sizeof cached);
+        CFRelease(f);
+        if (ok)
+            return cached;
+    }
+
+    cached[0] = '\0';
+    return NULL;
+}
+
 #else
 
 #include <unistd.h>
@@ -177,9 +277,17 @@ float SDLUIScale(void)
         }
     }
 
+#ifndef __APPLE__
+    /*
+     * macOS is excluded: its windows are laid out in points and the OS applies
+     * the Retina backing scale itself, so the DPI SDL reports there (physical
+     * pixels per inch, ~227 on a MacBook) would scale the UI a second time.
+     * 1.0 is the correct point-space scale.
+     */
     float hdpi = 0.0f;
     if (SDL_GetDisplayDPI(0, NULL, &hdpi, NULL) == 0 && hdpi > 1.0f)
         scale = hdpi / 96.0f;
+#endif
 
     if (scale < 1.0f) scale = 1.0f;
     if (scale > 4.0f) scale = 4.0f;

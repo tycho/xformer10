@@ -6,7 +6,9 @@
 #include <string.h>
 #if !defined(_WIN32)
 #include <unistd.h>
-#include <glob.h>
+#if !defined(__APPLE__)
+#include <glob.h>       /* PulseAudio socket discovery, Linux only */
+#endif
 #else
 #include <direct.h>
 #define strcasecmp _stricmp
@@ -128,6 +130,12 @@ int main(int argc, char **argv)
         snprintf(vi.szWindowsDir, sizeof(vi.szWindowsDir),
                  "%s\\xformer", base);
         _mkdir(vi.szWindowsDir);
+#elif defined(__APPLE__)
+        const char *home = getenv("HOME");
+        if (!home) home = "/tmp";
+        snprintf(vi.szWindowsDir, sizeof(vi.szWindowsDir),
+                 "%s/Library/Application Support/xformer", home);
+        mkdir(vi.szWindowsDir, 0755);
 #else
         const char *home = getenv("HOME");
         if (!home) home = "/tmp";
@@ -248,7 +256,8 @@ int main(int argc, char **argv)
         }
     }
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
+    /* Linux only: macOS uses SDL's CoreAudio backend as-is. */
     setenv("SDL_AUDIODRIVER", "pulseaudio", 1);
     {
         glob_t gl;

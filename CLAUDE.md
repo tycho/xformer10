@@ -43,6 +43,19 @@ cmake -B build-linux -S . && cmake --build build-linux -j$(nproc)
 
 Dependencies: `libsdl2-dev`, `libsdl2-ttf-dev`
 
+### macOS
+
+```bash
+cmake -B build-macos -S . -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build-macos
+# bundle: build-macos/Xformer10.app   (run from a terminal: build-macos/Xformer10.app/Contents/MacOS/Xformer10)
+```
+
+- No Homebrew runtime dependencies: SDL2, SDL2_ttf and FreeType are fetched and linked statically; the app links only system frameworks. Verify with `otool -L build-macos/Xformer10.app/Contents/MacOS/Xformer10`.
+- Minimum macOS defaults to 11.0 (`CMAKE_OSX_DEPLOYMENT_TARGET`). Universal binary: `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`.
+- `-DXFORMER_MACOS_BUNDLE=OFF` builds a bare `xformer10` executable instead. The bundle is ad-hoc signed; set `XFORMER_CODESIGN_IDENTITY` to sign for distribution.
+- UI font comes from CoreText (system UI font, then Helvetica Neue etc.) in `src/font_sdl.c`; config lives in `~/Library/Application Support/xformer`.
+- Icon: `src/res/xformer.icns` is generated from `gemul8r.ico` (nearest-neighbor upscale); `src/res/Info.plist.in` is the bundle plist template.
+
 ---
 
 ## Canonical source list

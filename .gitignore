@@ -54,5 +54,5 @@ dkms.conf
 /.vs/atarist/v16
 
 # Linux/CMake build output
-/build-linux/
+/build-*/
 /build/

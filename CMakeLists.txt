@@ -1,5 +1,24 @@
 cmake_minimum_required(VERSION 3.16)
+
+#
+# macOS: pin the minimum OS version before project() so that every vendored,
+# statically linked dependency is built against the same target. The .app
+# depends only on system frameworks, so this alone decides where it runs.
+# Override with -DCMAKE_OSX_DEPLOYMENT_TARGET=... at configure time.
+#
+if(CMAKE_HOST_APPLE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING
+        "Minimum macOS version to target")
+endif()
+
 project(xformer10 C)
+
+set(XFORMER_VERSION "10.10.2021")
+
+option(XFORMER_MACOS_BUNDLE
+       "macOS: build Xformer10.app instead of a bare executable" ON)
+set(XFORMER_CODESIGN_IDENTITY "-" CACHE STRING
+    "macOS: codesign identity for the .app ('-' = ad-hoc, empty = don't sign)")
 
 # CMake 4.x compatibility for old vendored dependencies such as
 # SDL2_ttf's bundled FreeType.
@@ -87,7 +106,6 @@ if(UNIX AND NOT APPLE)
     pkg_check_modules(FONTCONFIG REQUIRED IMPORTED_TARGET fontconfig)
 endif()
 
-
 add_executable(xformer10
     src/atari8.vm/atari800.c
     src/atari8.vm/atarikey.c
@@ -129,7 +147,6 @@ target_include_directories(xformer10 PRIVATE
     src/blocklib
     src/res
 )
-
 target_compile_definitions(xformer10 PRIVATE
     SDL2_ENABLED
 )
@@ -144,6 +161,51 @@ if(WIN32)
         shell32
         ole32
     )
+elseif(APPLE)
+    target_compile_definitions(xformer10 PRIVATE
+        LINUX_PORT
+    )
+
+    # CoreText resolves the UI font in font_sdl.c. Everything else the app
+    # needs (Cocoa, CoreAudio, Metal, ...) is carried by SDL2::SDL2-static.
+    target_link_libraries(xformer10 PRIVATE
+        "-framework CoreText"
+        "-framework CoreFoundation"
+    )
+
+    if(XFORMER_MACOS_BUNDLE)
+        set(XFORMER_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/src/res/xformer.icns")
+        target_sources(xformer10 PRIVATE "${XFORMER_ICNS}")
+        set_source_files_properties("${XFORMER_ICNS}" PROPERTIES
+            MACOSX_PACKAGE_LOCATION Resources
+        )
+
+        set_target_properties(xformer10 PROPERTIES
+            OUTPUT_NAME                        "Xformer10"
+            MACOSX_BUNDLE                      TRUE
+            MACOSX_BUNDLE_INFO_PLIST           "${CMAKE_CURRENT_SOURCE_DIR}/src/res/Info.plist.in"
+            MACOSX_BUNDLE_BUNDLE_NAME          "Xformer 10"
+            MACOSX_BUNDLE_GUI_IDENTIFIER       "com.emulators.xformer10"
+            MACOSX_BUNDLE_ICON_FILE            "xformer.icns"
+            MACOSX_BUNDLE_BUNDLE_VERSION       "${XFORMER_VERSION}"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "${XFORMER_VERSION}"
+            MACOSX_BUNDLE_COPYRIGHT            "Copyright (C) 1986-2021 Darek Mihocka and Danny Miller"
+        )
+
+        # Seal the bundle so Info.plist and the icon are covered by the
+        # signature. Ad-hoc by default; set XFORMER_CODESIGN_IDENTITY to a
+        # Developer ID to sign for distribution, or to "" to skip.
+        find_program(XFORMER_CODESIGN codesign)
+        if(XFORMER_CODESIGN AND NOT XFORMER_CODESIGN_IDENTITY STREQUAL "")
+            add_custom_command(TARGET xformer10 POST_BUILD
+                COMMAND "${XFORMER_CODESIGN}" --force
+                        --sign "${XFORMER_CODESIGN_IDENTITY}"
+                        "$<TARGET_BUNDLE_DIR:xformer10>"
+                COMMENT "Signing $<TARGET_BUNDLE_DIR:xformer10>"
+                VERBATIM
+            )
+        endif()
+    endif()
 else()
     target_compile_definitions(xformer10 PRIVATE
         LINUX_PORT
