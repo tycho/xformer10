@@ -56,3 +56,6 @@ dkms.conf
 # Linux/CMake build output
 /build-*/
 /build/
+
+# macOS Finder metadata
+.DS_Store
